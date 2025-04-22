@@ -1,10 +1,10 @@
 from fastapi import APIRouter, HTTPException
 import httpx
-import random
+import secrets
 
 router = APIRouter()
 
-# Fallback quotes in case the API is unavailable
+# Fallback quotes in case the API is unavailable temporary will update l8tr
 FALLBACK_QUOTES = [
     {
         "content": "The only way to do great work is to love what you do.",
@@ -54,8 +54,8 @@ async def get_random_quote():
                 }
     except Exception as e:
         print(f"Error fetching quote: {e}")
-        # Return a random fallback quote
-        fallback_quote = random.choice(FALLBACK_QUOTES)
+        # Return a cryptographically secure random fallback quote
+        fallback_quote = secrets.choice(FALLBACK_QUOTES)
         return {
             "quote": fallback_quote["content"],
             "author": fallback_quote["author"],
