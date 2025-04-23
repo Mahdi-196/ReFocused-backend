@@ -1,8 +1,12 @@
+from typing import Optional
 from pydantic import BaseModel
 
 class Token(BaseModel):
     access_token: str
+    refresh_token: Optional[str] = None
     token_type: str
 
 class TokenPayload(BaseModel):
-    sub: str | None = None 
+    sub: Optional[int] = None
+    exp: Optional[int] = None
+    type: Optional[str] = None 

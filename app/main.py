@@ -9,6 +9,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
 from sqlalchemy.orm import Session
 import logging
+from datetime import datetime
+from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.api.v1.api import api_router
@@ -20,7 +22,7 @@ from app.core.security_middleware import (
     SQLInjectionProtectionMiddleware
 )
 from app.core.security_monitor import SecurityMonitor
-from app.db.database import get_db
+from app.db.database import get_db, async_session
 from app.core.auth import get_current_user
 
 # Basic logging setup
@@ -74,11 +76,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         
         # Set security headers
-        if settings.SECURITY.SECURITY_HSTS_ENABLED and settings.is_production():
+        if settings.SECURITY_HSTS_ENABLED and settings.is_production():
             # TODO: Maybe adjust HSTS max age based on testing
-            max_age = settings.SECURITY.SECURITY_HSTS_MAX_AGE
-            include_subdomains = settings.SECURITY.SECURITY_HSTS_INCLUDE_SUBDOMAINS
-            preload = settings.SECURITY.SECURITY_HSTS_PRELOAD
+            max_age = settings.SECURITY_HSTS_MAX_AGE
+            include_subdomains = settings.SECURITY_HSTS_INCLUDE_SUBDOMAINS
+            preload = settings.SECURITY_HSTS_PRELOAD
             
             hsts_value = f"max-age={max_age}"
             if include_subdomains:
@@ -89,20 +91,22 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response.headers["Strict-Transport-Security"] = hsts_value
         
         # Basic security headers
-        if settings.SECURITY.SECURITY_FRAME_DENY:
+        if settings.SECURITY_FRAME_DENY:
             response.headers["X-Frame-Options"] = "DENY"
             
-        if settings.SECURITY.SECURITY_XSS_PROTECTION:
+        if settings.SECURITY_XSS_PROTECTION:
             response.headers["X-XSS-Protection"] = "1; mode=block"
             
-        if settings.SECURITY.SECURITY_CONTENT_TYPE_NOSNIFF:
+        if settings.SECURITY_CONTENT_TYPE_NOSNIFF:
             response.headers["X-Content-Type-Options"] = "nosniff"
             
-        # TODO: Fine-tune CSP based on actual needs
-        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self'; style-src 'self';"
+        # Content Security Policy
+        if settings.CSP_ENABLED:
+            directives = "; ".join(f"{k} {v}" for k, v in settings.CSP_DIRECTIVES.items())
+            response.headers["Content-Security-Policy"] = directives
         
-        # TODO: Maybe adjust referrer policy based on analytics needs
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        # Referrer Policy
+        response.headers["Referrer-Policy"] = settings.SECURITY_REFERRER_POLICY
         
         # TODO: Review permissions policy based on feature requirements
         response.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()"
@@ -125,10 +129,9 @@ class ConditionalHTTPSRedirectMiddleware(BaseHTTPMiddleware):
 
 # Initialize FastAPI app
 app = FastAPI(
-    title=security_config.APP_NAME,
-    openapi_url=f"{settings.API_V1_STR}/openapi.json",
-    docs_url="/docs" if not security_config.is_production() else None,
-    redoc_url="/redoc" if not security_config.is_production() else None
+    title="ReFocused API",
+    description="Backend API for the ReFocused productivity application",
+    version="1.0.0"
 )
 
 # Force HTTPS in production
@@ -138,41 +141,36 @@ else:
     app.add_middleware(ConditionalHTTPSRedirectMiddleware)
 
 # Set up CORS middleware with more secure configuration
-origins = security_config.CORS_ALLOW_ORIGINS
-
-if settings.is_development():
-    origins.append("http://localhost:3000")  # Allow localhost in development
-
+# Use settings.CORS_ORIGINS instead of security_config
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=security_config.CORS_ALLOW_CREDENTIALS,
-    allow_methods=security_config.CORS_ALLOW_METHODS,
-    allow_headers=security_config.CORS_ALLOW_HEADERS,
-    max_age=security_config.CORS_MAX_AGE
+    allow_origins=settings.CORS_ALLOWED_ORIGINS, # Use settings.CORS_ALLOWED_ORIGINS
+    allow_credentials=settings.CORS_ALLOW_CREDENTIALS, # Use settings.CORS_ALLOW_CREDENTIALS
+    allow_methods=settings.CORS_ALLOWED_METHODS, # Use settings.CORS_ALLOWED_METHODS
+    allow_headers=settings.CORS_ALLOWED_HEADERS, # Use settings.CORS_ALLOWED_HEADERS
 )
 
 # Add security middleware
 app.add_middleware(SecurityMiddleware)
 app.add_middleware(RequestValidationMiddleware)
 app.add_middleware(SQLInjectionProtectionMiddleware)
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"] if not security_config.is_production() else [security_config.BACKEND_URL])
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"] if not settings.is_production() else [settings.BACKEND_URL])
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
 
 # Add rate limiting in production
-if settings.SECURITY.RATE_LIMIT_ENABLED and not settings.is_development():
+if settings.RATE_LIMIT_ENABLED and not settings.is_development():
     app.add_middleware(
         RateLimitMiddleware, 
-        max_requests=settings.SECURITY.RATE_LIMIT_MAX_REQUESTS, 
-        timeframe_seconds=settings.SECURITY.RATE_LIMIT_PERIOD_SECONDS
+        max_requests=settings.RATE_LIMIT_MAX_REQUESTS, 
+        timeframe_seconds=settings.RATE_LIMIT_PERIOD_SECONDS
     )
 
 # Add compression for responses
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Include API router
-app.include_router(api_router, prefix=settings.API_V1_STR)
+app.include_router(api_router, prefix="/api/v1")
 
 # Add GraphQL endpoint
 graphql_app = GraphQLRouter(
@@ -195,36 +193,36 @@ async def add_process_time_header(request: Request, call_next):
 # Security monitoring middleware
 @app.middleware("http")
 async def security_monitoring(request: Request, call_next):
-    db = next(get_db())
-    security_monitor = SecurityMonitor(db)
-    
-    try:
-        # Get current user if authenticated
-        user = None
+    async with async_session() as db:
+        security_monitor = SecurityMonitor(db)
+        
         try:
-            user = await get_current_user(request=request, db=db)
-        except:
-            pass
-        
-        # Monitor request
-        security_monitor.monitor_request(request, user.id if user else None)
-        
-        # Process request
-        response = await call_next(request)
-        
-        return response
-        
-    except Exception as e:
-        logger.error(f"Security monitoring error: {str(e)}")
-        return await call_next(request)
-    
-    finally:
-        db.close()
+            # Get current user if authenticated
+            user = None
+            try:
+                user = await get_current_user(request=request, db=db)
+            except:
+                pass
+            
+            # Monitor request
+            security_monitor.monitor_request(request, user.id if user else None)
+            
+            # Process request
+            response = await call_next(request)
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"Security monitoring error: {str(e)}")
+            return await call_next(request)
 
 # Health check endpoint
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy"}
+    return {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat()
+    }
 
 # Security metrics endpoint
 @app.get("/security/metrics")
@@ -248,21 +246,45 @@ async def get_security_alerts(
 # Error handlers
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Global exception: {str(exc)}")
-    return {"detail": "An internal server error occurred"}
+    # Log the full error with traceback
+    logger.error(f"Global exception: {str(exc)}", exc_info=True)
+    
+    # Create error response with more details
+    error_response = {
+        "detail": "An internal server error occurred",
+        "error": str(exc),  # Include the error message
+        "type": exc.__class__.__name__  # Include the error type
+    }
+    
+    # In development, include more debugging info
+    if settings.is_development():
+        error_response.update({
+            "traceback": str(exc.__traceback__) if hasattr(exc, '__traceback__') else None,
+            "path": str(request.url.path),
+            "method": request.method
+        })
+    
+    return JSONResponse(
+        status_code=500,
+        content=error_response
+    )
 
 # Startup event
 @app.on_event("startup")
 async def startup_event():
     logger.info("Application startup - Security features initialized")
-    
-    # Initialize security monitoring
-    db = next(get_db())
-    try:
-        security_monitor = SecurityMonitor(db)
-        logger.info("Security monitoring initialized")
-    finally:
-        db.close()
+    print(f"\n{'='*50}")
+    print(f"SERVER IS NOW RUNNING ON PORT {settings.PORT}")
+    print(f"{'='*50}\n")
+
+    # Initialize security monitoring using async context manager
+    async with async_session() as db:
+        try:
+            security_monitor = SecurityMonitor(db)
+            logger.info("Security monitoring initialized")
+        except Exception as e:
+            logger.error(f"Error initializing security monitor: {e}")
+        # Session closes automatically when exiting 'async with'
 
 # Shutdown event
 @app.on_event("shutdown")
@@ -271,4 +293,8 @@ async def shutdown_event():
 
 @app.get("/")
 async def root():
-    return {"message": "Welcome to ReFocused API"} 
+    return {
+        "app": "ReFocused API",
+        "version": "1.0.0",
+        "status": "running"
+    } 

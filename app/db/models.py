@@ -5,7 +5,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship, DeclarativeBase
 from sqlalchemy.sql import func
 import enum
-import datetime
+from datetime import datetime, timedelta
 from app.db.database import Base
 from app.core.security_config import security_config
 

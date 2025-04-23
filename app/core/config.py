@@ -1,82 +1,100 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import List
+# app/core/config.py
 
-class SecuritySettings(BaseSettings):
-    # Password rules - might need to adjust these
-    PASSWORD_MIN_LENGTH: int = 8
-    PASSWORD_MAX_LENGTH: int = 64
-    
-    # Basic security stuff
-    CSRF_ENABLED: bool = True
-    RATE_LIMIT_ENABLED: bool = True
-    RATE_LIMIT_MAX_REQUESTS: int = 100  # TODO: Adjust based on usage
-    RATE_LIMIT_PERIOD_SECONDS: int = 60
-    
-    # Security headers - might need to tweak these
-    SECURITY_HSTS_ENABLED: bool = True
-    SECURITY_HSTS_MAX_AGE: int = 31536000  # 1 year
-    SECURITY_HSTS_INCLUDE_SUBDOMAINS: bool = True
-    SECURITY_HSTS_PRELOAD: bool = True
-    SECURITY_FRAME_DENY: bool = True
-    SECURITY_XSS_PROTECTION: bool = True
-    SECURITY_CONTENT_TYPE_NOSNIFF: bool = True
-    
-    # Logging setup
-    SECURITY_LOG_ENABLED: bool = True
-    SECURITY_LOG_PATH: str = "security.log"  # TODO: Set up log rotation
-    SECURITY_ALERT_EMAIL: str = ""  # TODO: Set up alert email
+from typing import List, Dict
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 class Settings(BaseSettings):
-    # App settings
-    APP_NAME: str = "ReFocused API"
-    ENVIRONMENT: str = "development"
-    DEBUG: bool = False
-    
-    # Auth stuff
-    SECRET_KEY: str = "temporary-dev-key-replace-in-production"  # TODO: Change in prod
-    ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60  # TODO: Maybe make this shorter
-    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
-    
-    # DB connection
-    DATABASE_URL: str = "sqlite:///./app.db"  # TODO: Switch to Postgres in prod
-    
-    # Service URLs
-    REDIS_URL: str = "redis://localhost:6379/0"  # TODO: Set up Redis in prod
-    FRONTEND_URL: str = "http://localhost:3000"
-    BACKEND_URL: str = "http://localhost:8000"
-    API_V1_STR: str = "/api/v1"
-    
-    # CORS settings
-    CORS_ORIGINS: List[str] = ["http://localhost:3000"]
-    CORS_ALLOW_CREDENTIALS: bool = True
-    
-    # Security settings
-    SECURITY: SecuritySettings = SecuritySettings()
-    
-    # SSL/TLS Settings (for production)
-    SSL_ENABLED: bool = False
-    SSL_CERT_FILE: str = ""
-    SSL_KEY_FILE: str = ""
-    
-    # Enhanced configuration to protect sensitive values
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        extra="forbid",
-        case_sensitive=True,
-        secrets=[
-            "SECRET_KEY", 
-            "DATABASE_URL", 
-            "REDIS_URL",
-            "SSL_KEY_FILE"
-        ]
-    )
-    
-    def is_development(self) -> bool:
-        return self.ENVIRONMENT.lower() == "development"
-    
-    def is_production(self) -> bool:
-        return self.ENVIRONMENT.lower() == "production"
+    # Application
+    APP_NAME: str = Field("ReFocused API", env="APP_NAME")
+    APP_ENV: str = Field("development", env="APP_ENV")
+    DEBUG: bool = Field(True, env="DEBUG")
+    API_V1_STR: str = Field("/api/v1", env="API_V1_STR")
 
-# Initialize settings
-settings = Settings() 
+    # Server
+    HOST: str = Field("0.0.0.0", env="HOST")
+    PORT: int = Field(8000, env="PORT")
+
+    # Auth
+    SECRET_KEY: str = Field("dev-secret-key-change-in-production", env="SECRET_KEY")
+    ALGORITHM: str = Field("HS256", env="ALGORITHM")
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(30, env="ACCESS_TOKEN_EXPIRE_MINUTES")
+    REFRESH_TOKEN_EXPIRE_DAYS: int = Field(7, env="REFRESH_TOKEN_EXPIRE_DAYS")
+    PASSWORD_HASHER: str = Field("bcrypt", env="PASSWORD_HASHER")
+    BCRYPT_ROUNDS: int = Field(12, env="BCRYPT_ROUNDS")
+
+    # Database
+    DATABASE_URL: str = Field(..., env="DATABASE_URL")
+    DATABASE_POOL_SIZE: int = Field(20, env="DATABASE_POOL_SIZE")
+    DATABASE_MAX_OVERFLOW: int = Field(10, env="DATABASE_MAX_OVERFLOW")
+    DATABASE_POOL_TIMEOUT: int = Field(30, env="DATABASE_POOL_TIMEOUT")
+    DATABASE_POOL_RECYCLE: int = Field(1800, env="DATABASE_POOL_RECYCLE")
+
+    # CORS
+    CORS_ALLOWED_ORIGINS: List[str] = Field(default_factory=list, env="CORS_ALLOWED_ORIGINS")
+    CORS_ALLOW_CREDENTIALS: bool = Field(True, env="CORS_ALLOW_CREDENTIALS")
+    CORS_ALLOWED_METHODS: List[str] = Field(default_factory=lambda: ["*"], env="CORS_ALLOWED_METHODS")
+    CORS_ALLOWED_HEADERS: List[str] = Field(default_factory=lambda: ["*"], env="CORS_ALLOWED_HEADERS")
+
+    # Rate Limiting
+    RATE_LIMIT_ENABLED: bool = Field(True, env="RATE_LIMIT_ENABLED")
+    RATE_LIMIT_MAX_REQUESTS: int = Field(100, env="RATE_LIMIT_MAX_REQUESTS")
+    RATE_LIMIT_PERIOD_SECONDS: int = Field(60, env="RATE_LIMIT_PERIOD_SECONDS")
+    RATE_LIMIT_BLOCK_DURATION: int = Field(300, env="RATE_LIMIT_BLOCK_DURATION")
+
+    # Rate‑limit headers
+    API_RATE_LIMIT_REMAINING: str = Field("X-RateLimit-Remaining", env="API_RATE_LIMIT_REMAINING")
+    API_RATE_LIMIT_RESET:     str = Field("X-RateLimit-Reset",     env="API_RATE_LIMIT_RESET")
+    API_RATE_LIMIT_HEADER:    str = Field("X-RateLimit-Limit",     env="API_RATE_LIMIT_HEADER")
+    API_VERSION_HEADER:       str = Field("X-API-Version",         env="API_VERSION_HEADER")
+
+    # Security Headers
+    SECURITY_HSTS_ENABLED: bool = Field(True, env="SECURITY_HSTS_ENABLED")
+    SECURITY_HSTS_MAX_AGE: int = Field(31_536_000, env="SECURITY_HSTS_MAX_AGE")
+    SECURITY_HSTS_INCLUDE_SUBDOMAINS: bool = Field(True, env="SECURITY_HSTS_INCLUDE_SUBDOMAINS")
+    SECURITY_HSTS_PRELOAD: bool = Field(False, env="SECURITY_HSTS_PRELOAD")
+    SECURITY_FRAME_DENY: bool = Field(True, env="SECURITY_FRAME_DENY")
+    SECURITY_XSS_PROTECTION: bool = Field(True, env="SECURITY_XSS_PROTECTION")
+    SECURITY_CONTENT_TYPE_NOSNIFF: bool = Field(True, env="SECURITY_CONTENT_TYPE_NOSNIFF")
+    SECURITY_REFERRER_POLICY: str = Field("strict-origin-when-cross-origin", env="SECURITY_REFERRER_POLICY")
+    SECURITY_PERMISSIONS_POLICY: str = Field("camera=(), microphone=(), geolocation=()", env="SECURITY_PERMISSIONS_POLICY")
+
+    # Content Security Policy
+    CSP_ENABLED: bool = Field(True, env="CSP_ENABLED")
+    CSP_DIRECTIVES: Dict[str, str] = Field(
+        default_factory=lambda: {
+            "default-src": "'self'",
+            "script-src": "'self' 'unsafe-inline'",
+            "style-src": "'self' 'unsafe-inline'",
+            "img-src": "'self' data:",
+        },
+        env="CSP_DIRECTIVES",
+    )
+
+    # Security Logging
+    SECURITY_LOG_ENABLED: bool = Field(True, env="SECURITY_LOG_ENABLED")
+    SECURITY_LOG_PATH: str = Field("security_events.log", env="SECURITY_LOG_PATH")
+    SECURITY_LOG_LEVEL: str = Field("INFO", env="SECURITY_LOG_LEVEL")
+    SECURITY_LOG_FORMAT: str = Field("%(asctime)s - %(levelname)s - %(message)s", env="SECURITY_LOG_FORMAT")
+
+    # Max Upload Size
+    MAX_UPLOAD_SIZE: int = Field(10 * 1024 * 1024, env="MAX_UPLOAD_SIZE")
+
+    # Trusted Hosts
+    TRUSTED_HOSTS: List[str] = Field(default_factory=list, env="TRUSTED_HOSTS")
+
+    # SSL/TLS
+    SSL_ENABLED: bool = Field(False, env="SSL_ENABLED")
+
+    # Helpers
+    def is_development(self) -> bool:
+        return self.APP_ENV.lower() == "development"
+
+    def is_production(self) -> bool:
+        return self.APP_ENV.lower() == "production"
+
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
+
+
+settings = Settings()

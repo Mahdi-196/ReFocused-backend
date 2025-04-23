@@ -6,6 +6,7 @@ import logging
 from typing import Dict, List
 import re
 from app.core.security_config import security_config
+from app.core.config import settings
 
 logger = logging.getLogger("security")
 
@@ -89,15 +90,15 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             response.headers["Content-Security-Policy"] = "; ".join(csp_directives)
         
         # API Version
-        response.headers[security_config.API_VERSION_HEADER] = "1.0"
+        response.headers[settings.API_VERSION_HEADER] = "1.0"
         
         # Rate Limit Headers
         if security_config.RATE_LIMIT_ENABLED and client_ip in self.rate_limit_store:
             remaining = security_config.RATE_LIMIT_MAX_REQUESTS - len(self.rate_limit_store[client_ip])
             reset_time = self.rate_limit_store[client_ip][0] + security_config.RATE_LIMIT_PERIOD_SECONDS
-            response.headers[security_config.API_RATE_LIMIT_REMAINING] = str(remaining)
-            response.headers[security_config.API_RATE_LIMIT_RESET] = str(int(reset_time))
-            response.headers[security_config.API_RATE_LIMIT_HEADER] = str(security_config.RATE_LIMIT_MAX_REQUESTS)
+            response.headers[settings.API_RATE_LIMIT_REMAINING] = str(remaining)
+            response.headers[settings.API_RATE_LIMIT_RESET] = str(int(reset_time))
+            response.headers[settings.API_RATE_LIMIT_HEADER] = str(security_config.RATE_LIMIT_MAX_REQUESTS)
         
         # Security logging
         if security_config.SECURITY_LOG_ENABLED:
@@ -148,7 +149,7 @@ class RequestValidationMiddleware(BaseHTTPMiddleware):
                 )
         
         # Validate API version header
-        api_version = request.headers.get(security_config.API_VERSION_HEADER)
+        api_version = request.headers.get(settings.API_VERSION_HEADER)
         if api_version and api_version != "1.0":
             return Response(
                 content="Unsupported API version",
