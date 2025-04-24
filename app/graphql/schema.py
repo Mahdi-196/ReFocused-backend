@@ -200,7 +200,6 @@ schema = strawberry.Schema(
 
 # Create GraphQL context with DB session
 async def get_context(db: AsyncSession = Depends(get_db)):
-    """Create context for Strawberry GraphQL with DB session"""
     # Pass request/response if needed by resolvers
     yield {"db": db}
 

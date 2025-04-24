@@ -1,5 +1,3 @@
-# app/core/config.py
-
 from typing import List, Dict
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -23,6 +21,13 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = Field(7, env="REFRESH_TOKEN_EXPIRE_DAYS")
     PASSWORD_HASHER: str = Field("bcrypt", env="PASSWORD_HASHER")
     BCRYPT_ROUNDS: int = Field(12, env="BCRYPT_ROUNDS")
+    
+    # Auth Flow Configuration
+    AUTH_TOKEN_URL: str = Field("/api/v1/auth/login", env="AUTH_TOKEN_URL")
+    AUTH_ALLOW_JSON: bool = Field(True, env="AUTH_ALLOW_JSON")
+    AUTH_ALLOW_FORM: bool = Field(True, env="AUTH_ALLOW_FORM")
+    AUTH_DEFAULT_GRANT_TYPE: str = Field("password", env="AUTH_DEFAULT_GRANT_TYPE")
+    AUTH_REQUIRE_GRANT_TYPE: bool = Field(False, env="AUTH_REQUIRE_GRANT_TYPE")
 
     # Database
     DATABASE_URL: str = Field(..., env="DATABASE_URL")

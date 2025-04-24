@@ -9,4 +9,12 @@ class Token(BaseModel):
 class TokenPayload(BaseModel):
     sub: Optional[int] = None
     exp: Optional[int] = None
-    type: Optional[str] = None 
+    type: Optional[str] = None
+
+class TokenResponse(BaseModel):
+    """OAuth2 token response schema"""
+    access_token: str
+    refresh_token: str
+    token_type: str
+    expires_in: int
+    scope: Optional[str] = None 

@@ -198,18 +198,14 @@ async def security_monitoring(request: Request, call_next):
         
         try:
             # Get current user if authenticated
-            user = None
-            try:
-                user = await get_current_user(request=request, db=db)
-            except:
-                pass
+            user = await get_current_user(request=request, db=db)
+            user_id = user.id if user else None
             
-            # Monitor request
-            security_monitor.monitor_request(request, user.id if user else None)
+            # Monitor the request
+            await security_monitor.monitor_request(request, user_id)
             
-            # Process request
+            # Process the request
             response = await call_next(request)
-            
             return response
             
         except Exception as e:
