@@ -1,52 +1,55 @@
 version: '3.8'
 
 services:
-  web:
-    build: .
-    ports:
-      - "8000:8000"
-    volumes:
-      - .:/app
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: refocused-postgres
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/refocused
-      - REDIS_URL=redis://redis:6379
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      - SECRET_KEY=your-secret-key-here
-    depends_on:
-      - db
-      - redis
-
-  db:
-    image: postgres:15
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=refocused
+      POSTGRES_DB: refocused-local-testing
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_HOST_AUTH_METHOD: trust
     ports:
       - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d refocused-local-testing"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 
-  redis:
-    image: redis:7
-    ports:
-      - "6379:6379"
-
-  celery:
+  # FastAPI Backend
+  backend:
     build: .
-    command: celery -A celery_worker.celery_app worker --loglevel=info
+    container_name: refocused-backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:password@postgres:5432/refocused-local-testing
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production}
+      APP_ENV: development
+      DEBUG: "true"
+      HOST: 0.0.0.0
+      PORT: 8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - .:/app
-    environment:
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/refocused
-      - REDIS_URL=redis://redis:6379
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      - SECRET_KEY=your-secret-key-here
-    depends_on:
-      - db
-      - redis
+      - /app/venv_mac  # Exclude local venv from container
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
 
 volumes:
-  postgres_data: 
+  postgres_data:
+    driver: local 

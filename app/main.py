@@ -6,7 +6,7 @@ from strawberry.fastapi import GraphQLRouter
 import time
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
+
 from sqlalchemy.orm import Session
 import logging
 from datetime import datetime
@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.api.v1.api import api_router
 from app.graphql import schema, get_context
-from app.core.security_config import security_config
+
 from app.core.security_middleware import (
     SecurityMiddleware,
     RequestValidationMiddleware,
@@ -27,9 +27,9 @@ from app.core.auth import get_current_user
 
 # Basic logging setup
 logging.basicConfig(
-    level=security_config.SECURITY_LOG_LEVEL,
-    format=security_config.SECURITY_LOG_FORMAT,
-    filename=security_config.SECURITY_LOG_PATH
+    level=settings.SECURITY_LOG_LEVEL,
+    format=settings.SECURITY_LOG_FORMAT,
+    filename=settings.SECURITY_LOG_PATH
 )
 logger = logging.getLogger("app")
 
@@ -43,7 +43,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         
     async def dispatch(self, request: Request, call_next):
         # Skip in dev mode
-        if settings.is_development() and not settings.SECURITY.RATE_LIMIT_ENABLED:
+        if settings.is_development() and not settings.RATE_LIMIT_ENABLED:
             return await call_next(request)
             
         client_ip = request.client.host
@@ -70,62 +70,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             
         return await call_next(request)
 
-# Security headers middleware
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        response = await call_next(request)
-        
-        # Set security headers
-        if settings.SECURITY_HSTS_ENABLED and settings.is_production():
-            # TODO: Maybe adjust HSTS max age based on testing
-            max_age = settings.SECURITY_HSTS_MAX_AGE
-            include_subdomains = settings.SECURITY_HSTS_INCLUDE_SUBDOMAINS
-            preload = settings.SECURITY_HSTS_PRELOAD
-            
-            hsts_value = f"max-age={max_age}"
-            if include_subdomains:
-                hsts_value += "; includeSubDomains"
-            if preload:
-                hsts_value += "; preload"
-                
-            response.headers["Strict-Transport-Security"] = hsts_value
-        
-        # Basic security headers
-        if settings.SECURITY_FRAME_DENY:
-            response.headers["X-Frame-Options"] = "DENY"
-            
-        if settings.SECURITY_XSS_PROTECTION:
-            response.headers["X-XSS-Protection"] = "1; mode=block"
-            
-        if settings.SECURITY_CONTENT_TYPE_NOSNIFF:
-            response.headers["X-Content-Type-Options"] = "nosniff"
-            
-        # Content Security Policy
-        if settings.CSP_ENABLED:
-            directives = "; ".join(f"{k} {v}" for k, v in settings.CSP_DIRECTIVES.items())
-            response.headers["Content-Security-Policy"] = directives
-        
-        # Referrer Policy
-        response.headers["Referrer-Policy"] = settings.SECURITY_REFERRER_POLICY
-        
-        # TODO: Review permissions policy based on feature requirements
-        response.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()"
-        
-        return response
+# Security headers are handled by SecurityMiddleware
 
-# HTTPS redirect middleware
-class ConditionalHTTPSRedirectMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        # Only enforce HTTPS in production
-        # TODO: Add test to verify redirect works
-        if settings.is_production() and request.url.scheme == "http":
-            https_url = str(request.url).replace("http://", "https://", 1)
-            return Response(
-                status_code=301,  # Permanent redirect
-                headers={"location": https_url},
-                content="Redirecting to HTTPS"
-            )
-        return await call_next(request)
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -134,28 +80,23 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Force HTTPS in production
-if settings.is_production() and settings.SSL_ENABLED:
-    app.add_middleware(HTTPSRedirectMiddleware)
-else:
-    app.add_middleware(ConditionalHTTPSRedirectMiddleware)
+# HTTPS will be handled by AWS infrastructure (ALB/CloudFront)
 
-# Set up CORS middleware with more secure configuration
-# Use settings.CORS_ORIGINS instead of security_config
+# Set up CORS middleware with Google OAuth support
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ALLOWED_ORIGINS, # Use settings.CORS_ALLOWED_ORIGINS
-    allow_credentials=settings.CORS_ALLOW_CREDENTIALS, # Use settings.CORS_ALLOW_CREDENTIALS
-    allow_methods=settings.CORS_ALLOWED_METHODS, # Use settings.CORS_ALLOWED_METHODS
-    allow_headers=settings.CORS_ALLOWED_HEADERS, # Use settings.CORS_ALLOWED_HEADERS
+    allow_origins=settings.CORS_ALLOWED_ORIGINS,
+    allow_credentials=settings.CORS_ALLOW_CREDENTIALS,
+    allow_methods=settings.CORS_ALLOWED_METHODS,
+    allow_headers=settings.CORS_ALLOWED_HEADERS + ["cross-origin-opener-policy"],
+    expose_headers=["cross-origin-opener-policy"],
 )
 
 # Add security middleware
 app.add_middleware(SecurityMiddleware)
 app.add_middleware(RequestValidationMiddleware)
 app.add_middleware(SQLInjectionProtectionMiddleware)
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"] if not settings.is_production() else [settings.BACKEND_URL])
-app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"] if not settings.is_production() else settings.TRUSTED_HOSTS)
 app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
 
 # Add rate limiting in production
@@ -179,6 +120,19 @@ graphql_app = GraphQLRouter(
     graphiql=settings.is_development()  # Enable GraphiQL only in development
 )
 app.include_router(graphql_app, prefix="/graphql")
+
+# Google OAuth COOP middleware
+@app.middleware("http")
+async def google_oauth_coop_middleware(request: Request, call_next):
+    response = await call_next(request)
+    
+    # Set COOP headers to allow Google OAuth popups
+    if "/auth/google" in str(request.url) or request.headers.get("referer", "").find("accounts.google.com") != -1:
+        response.headers["Cross-Origin-Opener-Policy"] = "same-origin-allow-popups"
+    else:
+        response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    
+    return response
 
 # Request timing middleware
 @app.middleware("http")
@@ -276,7 +230,7 @@ async def startup_event():
     # Initialize security monitoring using async context manager
     async with async_session() as db:
         try:
-            security_monitor = SecurityMonitor(db)
+            SecurityMonitor(db)
             logger.info("Security monitoring initialized")
         except Exception as e:
             logger.error(f"Error initializing security monitor: {e}")

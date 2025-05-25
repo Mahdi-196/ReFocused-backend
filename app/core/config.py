@@ -1,4 +1,4 @@
-from typing import List, Dict
+from typing import List, Dict, Optional
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     PASSWORD_HASHER: str = Field("bcrypt", env="PASSWORD_HASHER")
     BCRYPT_ROUNDS: int = Field(12, env="BCRYPT_ROUNDS")
     
+    # Google OAuth
+    GOOGLE_CLIENT_ID: Optional[str] = Field(None, env="GOOGLE_CLIENT_ID")
+    GOOGLE_CLIENT_SECRET: Optional[str] = Field(None, env="GOOGLE_CLIENT_SECRET")
+    
     # Auth Flow Configuration
     AUTH_TOKEN_URL: str = Field("/api/v1/auth/login", env="AUTH_TOKEN_URL")
     AUTH_ALLOW_JSON: bool = Field(True, env="AUTH_ALLOW_JSON")
@@ -37,7 +41,10 @@ class Settings(BaseSettings):
     DATABASE_POOL_RECYCLE: int = Field(1800, env="DATABASE_POOL_RECYCLE")
 
     # CORS
-    CORS_ALLOWED_ORIGINS: List[str] = Field(default_factory=list, env="CORS_ALLOWED_ORIGINS")
+    CORS_ALLOWED_ORIGINS: List[str] = Field(
+        default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"], 
+        env="CORS_ALLOWED_ORIGINS"
+    )
     CORS_ALLOW_CREDENTIALS: bool = Field(True, env="CORS_ALLOW_CREDENTIALS")
     CORS_ALLOWED_METHODS: List[str] = Field(default_factory=lambda: ["*"], env="CORS_ALLOWED_METHODS")
     CORS_ALLOWED_HEADERS: List[str] = Field(default_factory=lambda: ["*"], env="CORS_ALLOWED_HEADERS")
@@ -54,11 +61,7 @@ class Settings(BaseSettings):
     API_RATE_LIMIT_HEADER:    str = Field("X-RateLimit-Limit",     env="API_RATE_LIMIT_HEADER")
     API_VERSION_HEADER:       str = Field("X-API-Version",         env="API_VERSION_HEADER")
 
-    # Security Headers
-    SECURITY_HSTS_ENABLED: bool = Field(True, env="SECURITY_HSTS_ENABLED")
-    SECURITY_HSTS_MAX_AGE: int = Field(31_536_000, env="SECURITY_HSTS_MAX_AGE")
-    SECURITY_HSTS_INCLUDE_SUBDOMAINS: bool = Field(True, env="SECURITY_HSTS_INCLUDE_SUBDOMAINS")
-    SECURITY_HSTS_PRELOAD: bool = Field(False, env="SECURITY_HSTS_PRELOAD")
+    # Security Headers (HSTS removed since HTTPS handled by AWS)
     SECURITY_FRAME_DENY: bool = Field(True, env="SECURITY_FRAME_DENY")
     SECURITY_XSS_PROTECTION: bool = Field(True, env="SECURITY_XSS_PROTECTION")
     SECURITY_CONTENT_TYPE_NOSNIFF: bool = Field(True, env="SECURITY_CONTENT_TYPE_NOSNIFF")
@@ -89,9 +92,6 @@ class Settings(BaseSettings):
     # Trusted Hosts
     TRUSTED_HOSTS: List[str] = Field(default_factory=list, env="TRUSTED_HOSTS")
 
-    # SSL/TLS
-    SSL_ENABLED: bool = Field(False, env="SSL_ENABLED")
-
     # Helpers
     def is_development(self) -> bool:
         return self.APP_ENV.lower() == "development"
@@ -99,7 +99,7 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.APP_ENV.lower() == "production"
 
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
 
 
 settings = Settings()

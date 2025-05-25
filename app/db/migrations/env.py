@@ -1,9 +1,7 @@
-import asyncio
 from logging.config import fileConfig
 
 from sqlalchemy import pool, engine_from_config
 from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 
@@ -21,7 +19,12 @@ if config.config_file_name is not None:
 
 # Override sqlalchemy.url from alembic.ini with our DATABASE_URL
 # For migrations, use a non-async version of the URL
-sync_url = DATABASE_URL.replace("postgresql+asyncpg", "postgresql")
+if "sqlite+aiosqlite" in DATABASE_URL:
+    sync_url = DATABASE_URL.replace("sqlite+aiosqlite", "sqlite")
+elif "postgresql+asyncpg" in DATABASE_URL:
+    sync_url = DATABASE_URL.replace("postgresql+asyncpg", "postgresql")
+else:
+    sync_url = DATABASE_URL
 config.set_main_option("sqlalchemy.url", sync_url)
 
 # add your model's MetaData object here

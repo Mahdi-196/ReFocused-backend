@@ -5,7 +5,6 @@ import time
 import logging
 from typing import Dict, List
 import re
-from app.core.security_config import security_config
 from app.core.config import settings
 
 logger = logging.getLogger("security")
@@ -31,7 +30,7 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 del self.ip_blocklist[client_ip]
         
         # Rate limiting
-        if security_config.RATE_LIMIT_ENABLED:
+        if settings.RATE_LIMIT_ENABLED:
             current_time = time.time()
             if client_ip not in self.rate_limit_store:
                 self.rate_limit_store[client_ip] = []
@@ -39,12 +38,12 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             # Clean old requests
             self.rate_limit_store[client_ip] = [
                 t for t in self.rate_limit_store[client_ip]
-                if current_time - t < security_config.RATE_LIMIT_PERIOD_SECONDS
+                if current_time - t < settings.RATE_LIMIT_PERIOD_SECONDS
             ]
             
             # Check rate limit
-            if len(self.rate_limit_store[client_ip]) >= security_config.RATE_LIMIT_MAX_REQUESTS:
-                self.ip_blocklist[client_ip] = current_time + security_config.RATE_LIMIT_BLOCK_DURATION
+            if len(self.rate_limit_store[client_ip]) >= settings.RATE_LIMIT_MAX_REQUESTS:
+                self.ip_blocklist[client_ip] = current_time + settings.RATE_LIMIT_BLOCK_DURATION
                 return Response(
                     content="Too many requests. Please try again later.",
                     status_code=429
@@ -55,53 +54,45 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         # Security headers
         response = await call_next(request)
         
-        # HSTS
-        if security_config.SECURITY_HSTS_ENABLED:
-            hsts_value = f"max-age={security_config.SECURITY_HSTS_MAX_AGE}"
-            if security_config.SECURITY_HSTS_INCLUDE_SUBDOMAINS:
-                hsts_value += "; includeSubDomains"
-            if security_config.SECURITY_HSTS_PRELOAD:
-                hsts_value += "; preload"
-            response.headers["Strict-Transport-Security"] = hsts_value
+        # HSTS removed - handled by AWS infrastructure
         
-        # X-Frame-Options
-        if security_config.SECURITY_FRAME_DENY:
-            response.headers["X-Frame-Options"] = "DENY"
+        # X-Frame-Options - Allow for Google OAuth
+        if settings.SECURITY_FRAME_DENY:
+            # Allow frames from Google for OAuth
+            response.headers["X-Frame-Options"] = "SAMEORIGIN"
         
         # X-XSS-Protection
-        if security_config.SECURITY_XSS_PROTECTION:
+        if settings.SECURITY_XSS_PROTECTION:
             response.headers["X-XSS-Protection"] = "1; mode=block"
         
         # X-Content-Type-Options
-        if security_config.SECURITY_CONTENT_TYPE_NOSNIFF:
+        if settings.SECURITY_CONTENT_TYPE_NOSNIFF:
             response.headers["X-Content-Type-Options"] = "nosniff"
         
         # Referrer Policy
-        response.headers["Referrer-Policy"] = security_config.SECURITY_REFERRER_POLICY
+        response.headers["Referrer-Policy"] = settings.SECURITY_REFERRER_POLICY
         
         # Permissions Policy
-        response.headers["Permissions-Policy"] = security_config.SECURITY_PERMISSIONS_POLICY
+        response.headers["Permissions-Policy"] = settings.SECURITY_PERMISSIONS_POLICY
         
         # Content Security Policy
-        if security_config.CSP_ENABLED:
-            csp_directives = []
-            for directive, sources in security_config.CSP_DIRECTIVES.items():
-                csp_directives.append(f"{directive} {' '.join(sources)}")
-            response.headers["Content-Security-Policy"] = "; ".join(csp_directives)
+        if settings.CSP_ENABLED:
+            directives = "; ".join(f"{k} {v}" for k, v in settings.CSP_DIRECTIVES.items())
+            response.headers["Content-Security-Policy"] = directives
         
         # API Version
         response.headers[settings.API_VERSION_HEADER] = "1.0"
         
         # Rate Limit Headers
-        if security_config.RATE_LIMIT_ENABLED and client_ip in self.rate_limit_store:
-            remaining = security_config.RATE_LIMIT_MAX_REQUESTS - len(self.rate_limit_store[client_ip])
-            reset_time = self.rate_limit_store[client_ip][0] + security_config.RATE_LIMIT_PERIOD_SECONDS
+        if settings.RATE_LIMIT_ENABLED and client_ip in self.rate_limit_store:
+            remaining = settings.RATE_LIMIT_MAX_REQUESTS - len(self.rate_limit_store[client_ip])
+            reset_time = self.rate_limit_store[client_ip][0] + settings.RATE_LIMIT_PERIOD_SECONDS
             response.headers[settings.API_RATE_LIMIT_REMAINING] = str(remaining)
             response.headers[settings.API_RATE_LIMIT_RESET] = str(int(reset_time))
-            response.headers[settings.API_RATE_LIMIT_HEADER] = str(security_config.RATE_LIMIT_MAX_REQUESTS)
+            response.headers[settings.API_RATE_LIMIT_HEADER] = str(settings.RATE_LIMIT_MAX_REQUESTS)
         
         # Security logging
-        if security_config.SECURITY_LOG_ENABLED:
+        if settings.SECURITY_LOG_ENABLED:
             self.log_security_event(request, response, client_ip)
         
         return response
@@ -131,7 +122,7 @@ class RequestValidationMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # Validate request size
         content_length = request.headers.get("content-length")
-        if content_length and int(content_length) > security_config.MAX_UPLOAD_SIZE:
+        if content_length and int(content_length) > settings.MAX_UPLOAD_SIZE:
             return Response(
                 content="Request entity too large",
                 status_code=413

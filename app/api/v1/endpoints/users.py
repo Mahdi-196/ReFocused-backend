@@ -14,8 +14,7 @@ from jose import jwt, JWTError
 # App imports
 from app.core.config import settings
 from app.db.session import get_db
-from app.models.user import User
-from app.models.token import TokenBlacklist
+from app.db.models import User, TokenBlacklist
 from app.schemas.user import UserResponse
 
 router = APIRouter()
@@ -31,21 +30,7 @@ async def get_current_user(
     Validates token, checks blacklist, and ensures user exists.
     """
     try:
-        # Decode and validate JWT token
-        payload = jwt.decode(
-            token,
-            settings.SECRET_KEY,
-            algorithms=[settings.ALGORITHM]
-        )
-        username = payload.get("sub")
-        if not username:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Could not validate credentials",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
-        # Check if token is blacklisted
+        # Check if token is blacklisted FIRST
         if await TokenBlacklist.is_blacklisted(db, token):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -53,9 +38,25 @@ async def get_current_user(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        # Get user from database
+        # Decode and validate JWT token
+        payload = jwt.decode(
+            token,
+            settings.SECRET_KEY,
+            algorithms=[settings.ALGORITHM]
+        )
+        email = payload.get("sub")
+        payload.get("user_id")
+        
+        if not email:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Get user from database by email
         result = await db.execute(
-            select(User).where(User.username == username)
+            select(User).where(User.email == email)
         )
         user = result.scalar_one_or_none()
         
@@ -63,6 +64,13 @@ async def get_current_user(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found"
+            )
+
+        # Check if user is active
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Inactive user"
             )
 
         return user
@@ -75,9 +83,21 @@ async def get_current_user(
         )
 
 
-@router.get("/users/me", response_model=UserResponse)
-async def read_own_profile(current_user: User = Depends(get_current_user)) -> User:
+@router.get("/me", response_model=UserResponse)
+async def read_own_profile(
+    current_user: User = Depends(get_current_user)
+) -> Any:
     """
     Get the profile of the currently authenticated user.
+    """
+    return current_user
+
+
+@router.get("/profile", response_model=UserResponse)
+async def get_user_profile(
+    current_user: User = Depends(get_current_user)
+) -> Any:
+    """
+    Alternative endpoint for getting user profile.
     """
     return current_user 

@@ -1,6 +1,5 @@
 import strawberry
 from typing import List, Optional
-from datetime import date
 from strawberry.types import Info
 from fastapi import Depends
 
@@ -9,12 +8,10 @@ from .types import (
     PomodoroSettings, StudySet, Flashcard, Mantra,
     JournalCollection, JournalEntry,
     GoalInput, HabitInput, HabitStreakInput, MoodEntryInput,
-    PomodoroSettingsInput, StudySetInput, FlashcardInput,
-    QuickAccessInput, MantraInput, JournalCollectionInput,
-    JournalEntryInput
+    PomodoroSettingsInput
 )
 from .enums import GoalDuration
-from .scalars import Date, DateTime
+from .scalars import Date
 from ..db.session import get_db
 from .resolvers import (
     get_user, get_goals, get_habits, get_habit_streaks,
@@ -186,35 +183,15 @@ class Mutation:
         db = info.context["db"]
         return await set_pomodoro(user_id=user_id, input=input, db=db)
     
-    # TODO: Add other mutations
+    # Additional mutations can be added here
 
 # Create the schema
 schema = strawberry.Schema(
     query=Query, 
-    mutation=Mutation,
-    # config=strawberry.StrawberryConfig(
-    #     auto_camel_case=True  # Example config
-    # )
-    # Remove or update the config parameter based on library version
+    mutation=Mutation
 )
 
 # Create GraphQL context with DB session
 async def get_context(db: AsyncSession = Depends(get_db)):
-    # Pass request/response if needed by resolvers
-    yield {"db": db}
-
-# Create the schema
-schema = strawberry.Schema(
-    query=Query, 
-    mutation=Mutation,
-    # config=strawberry.StrawberryConfig(
-    #     auto_camel_case=True  # Example config
-    # )
-    # Remove or update the config parameter based on library version
-)
-
-# Create GraphQL context with DB session
-async def get_context(db: AsyncSession = Depends(get_db)): # Use FastAPI's Depends
     """Create context for Strawberry GraphQL with DB session"""
-    # Pass request/response if needed by resolvers
     yield {"db": db} 

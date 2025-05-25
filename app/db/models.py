@@ -1,22 +1,20 @@
 from sqlalchemy import (
     Column, Integer, String, Text, DateTime, Date, 
-    ForeignKey, Boolean, Enum, Table, UniqueConstraint, Index
+    ForeignKey, Boolean, UniqueConstraint, Index
 )
 from sqlalchemy.orm import relationship, DeclarativeBase
 from sqlalchemy.sql import func
-import enum
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from app.db.database import Base
-from app.core.security_config import security_config
 
 # Base class for all models
 class Base(DeclarativeBase):
     pass
 
-# Enum for GoalDuration
-class GoalDurationType(str, enum.Enum):
-    SHORT = "SHORT"
-    LONG = "LONG"
+# Remove unused enum
+# class GoalDurationType(str, enum.Enum):
+#     SHORT = "SHORT"
+#     LONG = "LONG"
 
 # User model
 class User(Base):
@@ -51,17 +49,21 @@ class User(Base):
 class Goal(Base):
     __tablename__ = "goals"
     
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    title = Column(String, nullable=False)
-    description = Column(Text)
-    duration = Column(Enum(GoalDurationType), nullable=False, index=True)
-    start_date = Column(Date, nullable=False, index=True)
-    end_date = Column(Date, index=True)
-    created_at = Column(DateTime, default=func.now(), nullable=False)
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(255), nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    target_date = Column(DateTime, nullable=True)
+    is_completed = Column(Boolean, default=False, nullable=False)
+    priority = Column(String(20), default="medium", nullable=False)  # low, medium, high
+    category = Column(String(100), nullable=True)
     
-    # Relationships
+    # User relationship
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     user = relationship("User", back_populates="goals")
+    
+    # Timestamps
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
 # QuickAccess model
 class QuickAccess(Base):
@@ -242,17 +244,21 @@ class TokenBlacklist(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False)
     
     @classmethod
-    def is_blacklisted(cls, db, token: str) -> bool:
-        return db.query(cls).filter(
-            cls.token == token,
-            cls.expires_at > datetime.utcnow()
-        ).first() is not None
+    async def is_blacklisted(cls, db, token: str) -> bool:
+        from sqlalchemy import select
+        result = await db.execute(
+            select(cls).where(
+                cls.token == token,
+                cls.expires_at > datetime.now(timezone.utc)
+            )
+        )
+        return result.scalar_one_or_none() is not None
     
     @classmethod
-    def add_token(cls, db, token: str, expires_at: datetime):
+    async def add_token(cls, db, token: str, expires_at: datetime):
         blacklisted_token = cls(token=token, expires_at=expires_at)
         db.add(blacklisted_token)
-        db.commit()
+        await db.commit()
         return blacklisted_token
 
 class SecurityLog(Base):

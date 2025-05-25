@@ -1,9 +1,9 @@
 from passlib.context import CryptContext
 from jose import JWTError, jwt, ExpiredSignatureError
 from datetime import datetime, timedelta
-from typing import Optional, Union, Dict, Any
+from typing import Optional
 from pydantic import BaseModel
-from fastapi import Depends, HTTPException, status, Request
+from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 import time

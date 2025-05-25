@@ -1,6 +1,5 @@
 import datetime
 import strawberry
-from typing import Any
 
 @strawberry.scalar(
     description="Date scalar that serializes Python date objects to ISO-8601 strings"

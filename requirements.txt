@@ -8,7 +8,9 @@ pydantic-settings>=2.1.0
 # Database
 sqlalchemy>=2.0.25
 asyncpg>=0.29.0
+psycopg2-binary>=2.9.9
 alembic>=1.13.1
+greenlet>=3.0.0
 
 # Auth
 passlib[bcrypt]>=1.7.4
@@ -25,6 +27,7 @@ httpx>=0.26.0
 email-validator>=2.1.0.post1
 python-dateutil==2.8.2
 python-dotenv>=1.0.0
+itsdangerous>=2.0.0
 
 # Security
 bandit==1.7.7

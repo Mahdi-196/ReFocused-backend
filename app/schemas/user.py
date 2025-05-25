@@ -4,7 +4,7 @@ from datetime import datetime
 
 class UserBase(BaseModel):
     email: EmailStr
-    full_name: Optional[str] = None
+    name: Optional[str] = None
     is_active: Optional[bool] = True
 
 class UserCreate(UserBase):
@@ -15,15 +15,14 @@ class UserUpdate(UserBase):
 
 class UserResponse(BaseModel):
     id: int
-    username: str
     email: EmailStr
-    full_name: Optional[str] = None
+    name: Optional[str] = None
     is_active: bool
     created_at: datetime
     last_login: Optional[datetime] = None
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class UserInDB(UserResponse):
     hashed_password: str
@@ -32,4 +31,4 @@ class UserInDB(UserResponse):
     password_changed_at: Optional[datetime] = None
 
     class Config:
-        orm_mode = True 
+        from_attributes = True 

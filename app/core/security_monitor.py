@@ -1,12 +1,11 @@
 import logging
-import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.sql import func
-from app.db.models import SecurityLog, SecurityAlert, User, LoginAttempt
+from app.db.models import SecurityAlert, User, LoginAttempt
 from app.core.security_config import security_config
 
 logger = logging.getLogger("security_monitor")

@@ -1,8 +1,7 @@
 import strawberry
 from typing import List, Optional
-from datetime import date, datetime
 
-from .enums import GoalDuration
+# from .enums import GoalDuration  # No longer needed
 from .scalars import Date, DateTime
 
 # Core types
@@ -26,10 +25,12 @@ class Goal:
     user: "User"
     title: str
     description: Optional[str] = None
-    duration: GoalDuration
-    start_date: Date
-    end_date: Optional[Date] = None
+    target_date: Optional[DateTime] = None
+    is_completed: bool = False
+    priority: str = "medium"  # low, medium, high
+    category: Optional[str] = None
     created_at: DateTime
+    updated_at: DateTime
 
 @strawberry.type
 class QuickAccess:
@@ -117,9 +118,9 @@ class JournalEntry:
 class GoalInput:
     title: str
     description: Optional[str] = None
-    duration: GoalDuration
-    start_date: Optional[Date] = None
-    end_date: Optional[Date] = None
+    target_date: Optional[DateTime] = None
+    priority: Optional[str] = "medium"
+    category: Optional[str] = None
 
 @strawberry.input
 class HabitInput:

@@ -2,7 +2,6 @@ import strawberry
 from typing import List, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from ..db.models import (
     User as UserModel,
@@ -16,8 +15,7 @@ from ..db.models import (
     Flashcard as FlashcardModel,
     Mantra as MantraModel,
     JournalCollection as JournalCollectionModel,
-    JournalEntry as JournalEntryModel,
-    GoalDurationType
+    JournalEntry as JournalEntryModel
 )
 
 from .types import (
@@ -25,11 +23,9 @@ from .types import (
     PomodoroSettings, StudySet, Flashcard, Mantra,
     JournalCollection, JournalEntry,
     GoalInput, HabitInput, HabitStreakInput, MoodEntryInput,
-    PomodoroSettingsInput, StudySetInput, FlashcardInput,
-    QuickAccessInput, MantraInput, JournalCollectionInput,
-    JournalEntryInput
+    PomodoroSettingsInput
 )
-from .enums import GoalDuration
+# from .enums import GoalDuration  # No longer needed
 from datetime import date
 
 # Utility function to convert SQLAlchemy models to Strawberry types
@@ -58,11 +54,11 @@ async def get_user(id: strawberry.ID, db: AsyncSession) -> Optional[User]:
         return None
     return model_to_strawberry(user, User)
 
-async def get_goals(user_id: strawberry.ID, db: AsyncSession, duration: Optional[GoalDuration] = None) -> List[Goal]:
-    """Get goals for a user, optionally filtered by duration"""
+async def get_goals(user_id: strawberry.ID, db: AsyncSession, priority: Optional[str] = None) -> List[Goal]:
+    """Get goals for a user, optionally filtered by priority"""
     query = select(GoalModel).where(GoalModel.user_id == user_id)
-    if duration:
-        query = query.where(GoalModel.duration == GoalDurationType(duration))
+    if priority:
+        query = query.where(GoalModel.priority == priority)
     
     result = await db.execute(query)
     goals = result.scalars().all()
@@ -160,9 +156,9 @@ async def create_goal(user_id: strawberry.ID, input: GoalInput, db: AsyncSession
         user_id=user_id,
         title=input.title,
         description=input.description,
-        duration=GoalDurationType(input.duration),
-        start_date=input.start_date or date.today(),
-        end_date=input.end_date
+        target_date=input.target_date,
+        priority=input.priority or "medium",
+        category=input.category
     )
     
     # Add to session and commit
@@ -186,12 +182,12 @@ async def update_goal(id: strawberry.ID, input: GoalInput, db: AsyncSession) -> 
         goal.title = input.title
     if input.description is not None:
         goal.description = input.description
-    if input.duration is not None:
-        goal.duration = GoalDurationType(input.duration)
-    if input.start_date is not None:
-        goal.start_date = input.start_date
-    if input.end_date is not None:
-        goal.end_date = input.end_date
+    if input.target_date is not None:
+        goal.target_date = input.target_date
+    if input.priority is not None:
+        goal.priority = input.priority
+    if input.category is not None:
+        goal.category = input.category
     
     await db.commit()
     await db.refresh(goal)

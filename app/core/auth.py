@@ -5,8 +5,8 @@ from passlib.context import CryptContext
 from fastapi import HTTPException, status, Depends, Request
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
-import time
 import logging
+from app.core.config import settings
 from app.core.security_config import security_config
 from app.db.database import get_db
 from app.db.models import User, TokenBlacklist, LoginAttempt
@@ -14,12 +14,11 @@ from app.utils.security import generate_secure_random_string
 
 logger = logging.getLogger("auth")
 
-# Using bcrypt with some extra security
+# Using bcrypt with enhanced security
 pwd_context = CryptContext(
     schemes=["bcrypt"],
     deprecated="auto",
-    bcrypt__rounds=12,
-    bcrypt__salt_size=16
+    bcrypt__rounds=12
 )
 
 # OAuth2 setup
@@ -44,15 +43,14 @@ class TokenManager:
         if expires_delta:
             expire = datetime.utcnow() + expires_delta
         else:
-            expire = datetime.utcnow() + timedelta(minutes=security_config.ACCESS_TOKEN_EXPIRE_MINUTES)
+            expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
         to_encode.update({"exp": expire})
         
-        # TODO: Maybe add more claims based on user role
-        # TODO: Consider adding token versioning
+
         encoded_jwt = jwt.encode(
             to_encode,
-            security_config.SECRET_KEY,
-            algorithm=security_config.ALGORITHM
+            settings.SECRET_KEY,
+            algorithm=settings.ALGORITHM
         )
         
         return encoded_jwt
@@ -69,15 +67,14 @@ class TokenManager:
             "nbf": iat,
             "jti": generate_secure_random_string(32),
             "type": "refresh",
-            "exp": datetime.utcnow() + timedelta(days=security_config.REFRESH_TOKEN_EXPIRE_DAYS)
+            "exp": datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
         })
         
-        # TODO: Maybe add device fingerprint
-        # TODO: Consider adding token rotation
+
         encoded_jwt = jwt.encode(
             to_encode,
-            security_config.SECRET_KEY,
-            algorithm=security_config.ALGORITHM
+            settings.SECRET_KEY,
+            algorithm=settings.ALGORITHM
         )
         
         return encoded_jwt
@@ -97,8 +94,8 @@ class TokenManager:
             # Decode token with enhanced validation
             payload = jwt.decode(
                 token,
-                security_config.SECRET_KEY,
-                algorithms=[security_config.ALGORITHM],
+                settings.SECRET_KEY,
+                algorithms=[settings.ALGORITHM],
                 options={
                     "verify_signature": True,
                     "verify_exp": True,

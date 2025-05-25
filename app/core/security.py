@@ -2,12 +2,11 @@ import logging
 import json
 import datetime
 from datetime import datetime, timedelta
-from typing import Any, Union, Dict, Optional
-from jose import jwt, JWTError
+from typing import Any, Dict, Optional
+from jose import jwt
 from passlib.context import CryptContext
 
 from app.core.config import settings
-from app.core.security_config import security_config
 
 # Set up security logging
 security_logger = logging.getLogger("app.security")
@@ -79,23 +78,16 @@ def create_refresh_token(data: dict) -> str:
 
 # Security alert functions
 def alert_suspicious_activity(user_id: Optional[int], activity_type: str, details: Dict[str, Any]):
-    # Log suspicious stuff and maybe send an alert
-    # TODO: Set up Slack webhook for alerts
-    # TODO: Add rate limiting for alerts to avoid spam
+    """Log suspicious activity for security monitoring."""
     log_security_event(
         event_type="suspicious_activity",
         details={"activity_type": activity_type, **details},
         level="warning",
         user_id=user_id
     )
-    
-    # TODO: Add email alerts for critical stuff
-    # TODO: Maybe add a dashboard for security events
 
 def alert_authentication_failure(username: str, ip_address: str, reason: str):
-    # Log failed login attempts
-    # TODO: Add IP blocking after too many failures
-    # TODO: Maybe add captcha after 3 failed attempts
+    """Log failed authentication attempts for security monitoring."""
     log_security_event(
         event_type="auth_failure",
         details={"username": username, "ip_address": ip_address, "reason": reason},

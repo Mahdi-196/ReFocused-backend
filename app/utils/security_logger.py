@@ -2,16 +2,16 @@ import logging
 from datetime import datetime
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.log import SecurityLog
-from app.core.security_config import security_config
+from app.db.models import SecurityLog
+from app.core.config import settings
 
 # Configure security logger
 logger = logging.getLogger("security")
 logger.setLevel(logging.INFO)
 
-if security_config.SECURITY_LOG_ENABLED:
-    handler = logging.FileHandler(security_config.SECURITY_LOG_PATH)
-    handler.setFormatter(logging.Formatter(security_config.SECURITY_LOG_FORMAT))
+if settings.SECURITY_LOG_ENABLED:
+    handler = logging.FileHandler(settings.SECURITY_LOG_PATH)
+    handler.setFormatter(logging.Formatter(settings.SECURITY_LOG_FORMAT))
     logger.addHandler(handler)
 
 async def log_security_event(
@@ -56,7 +56,7 @@ async def create_security_alert(
 ) -> None:
     """Create a security alert."""
     try:
-        from app.models.user import SecurityAlert
+        from app.db.models import SecurityAlert
         
         alert = SecurityAlert(
             alert_type=alert_type,
