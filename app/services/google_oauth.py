@@ -83,6 +83,39 @@ class GoogleOAuthService:
         """
         return email.split('@')[0]
         
+    def extract_email_from_user_info(self, user_info: Dict[str, Any]) -> str:
+        """
+        Extract email from user info.
+        
+        Args:
+            user_info: User information from Google
+            
+        Returns:
+            Email address
+        """
+        return user_info.get('email', '')
+    
+    def generate_unique_email(self, base_email: str, existing_emails: set) -> str:
+        """
+        Generate a unique email by adding suffix if needed.
+        
+        Args:
+            base_email: Base email to use
+            existing_emails: Set of existing emails
+            
+        Returns:
+            Unique email
+        """
+        if base_email not in existing_emails:
+            return base_email
+            
+        username, domain = base_email.split('@', 1)
+        counter = 1
+        while f"{username}_{counter}@{domain}" in existing_emails:
+            counter += 1
+            
+        return f"{username}_{counter}@{domain}"
+    
     def generate_unique_username(self, base_username: str, existing_usernames: set) -> str:
         """
         Generate a unique username by adding suffix if needed.

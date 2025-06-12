@@ -2,7 +2,6 @@ from fastapi import FastAPI, Request, Response, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from strawberry.fastapi import GraphQLRouter
 import time
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -14,7 +13,6 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.api.v1.api import api_router
-from app.graphql import schema, get_context
 
 from app.core.security_middleware import (
     SecurityMiddleware,
@@ -77,19 +75,40 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 app = FastAPI(
     title="ReFocused API",
     description="Backend API for the ReFocused productivity application",
-    version="1.0.0"
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
 )
 
 # HTTPS will be handled by AWS infrastructure (ALB/CloudFront)
 
-# Set up CORS middleware with Google OAuth support
+# CORS middleware configuration for frontend-backend connection
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ALLOWED_ORIGINS,
-    allow_credentials=settings.CORS_ALLOW_CREDENTIALS,
-    allow_methods=settings.CORS_ALLOWED_METHODS,
-    allow_headers=settings.CORS_ALLOWED_HEADERS + ["cross-origin-opener-policy"],
-    expose_headers=["cross-origin-opener-policy"],
+    allow_origins=[
+        "http://localhost:3000",  # React default
+        "http://localhost:3001",  # Alternative React port
+        "http://localhost:5173",  # Vite default
+        "http://localhost:5174",  # Alternative Vite port
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+        # Add your production frontend URL here when ready
+    ],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "Accept",
+        "Origin",
+        "User-Agent",
+        "DNT",
+        "Cache-Control",
+        "X-Mx-ReqToken",
+        "Keep-Alive",
+        "X-Requested-With",
+        "If-Modified-Since",
+    ],
 )
 
 # Add security middleware
@@ -112,14 +131,6 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Include API router
 app.include_router(api_router, prefix="/api/v1")
-
-# Add GraphQL endpoint
-graphql_app = GraphQLRouter(
-    schema,
-    context_getter=get_context,
-    graphiql=settings.is_development()  # Enable GraphiQL only in development
-)
-app.include_router(graphql_app, prefix="/graphql")
 
 # Google OAuth COOP middleware
 @app.middleware("http")
@@ -244,7 +255,13 @@ async def shutdown_event():
 @app.get("/")
 async def root():
     return {
-        "app": "ReFocused API",
+        "message": "ReFocused API is running",
         "version": "1.0.0",
-        "status": "running"
+        "status": "active",
+        "auth_endpoints": {
+            "register": "/api/v1/auth/register",
+            "login": "/api/v1/auth/token", 
+            "logout": "/api/v1/auth/logout",
+            "profile": "/api/v1/auth/me"
+        }
     } 

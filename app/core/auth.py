@@ -5,6 +5,7 @@ from passlib.context import CryptContext
 from fastapi import HTTPException, status, Depends, Request
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 import logging
 from app.core.config import settings
 from app.core.security_config import security_config
@@ -80,11 +81,11 @@ class TokenManager:
         return encoded_jwt
     
     @staticmethod
-    def verify_token(token: str, db: Session) -> Dict[str, Any]:
+    async def verify_token(token: str, db: AsyncSession) -> Dict[str, Any]:
         """Verify a token with enhanced security checks."""
         try:
             # Check if token is blacklisted
-            if TokenBlacklist.is_blacklisted(db, token):
+            if await TokenBlacklist.is_blacklisted(db, token):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Token has been revoked",
@@ -170,7 +171,7 @@ class AuthenticationManager:
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     request: Request = None
 ) -> User:
     """Get current authenticated user with enhanced security checks."""
@@ -182,7 +183,7 @@ async def get_current_user(
     
     try:
         # Verify token
-        payload = TokenManager.verify_token(token, db)
+        payload = await TokenManager.verify_token(token, db)
         
         # Get user ID from token
         user_id: int = payload.get("user_id")
@@ -190,7 +191,9 @@ async def get_current_user(
             raise credentials_exception
         
         # Get user from database
-        user = db.query(User).filter(User.id == user_id).first()
+        from sqlalchemy import select
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
         if user is None:
             raise credentials_exception
         

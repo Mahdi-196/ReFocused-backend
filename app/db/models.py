@@ -22,10 +22,16 @@ class User(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True, nullable=False)
-    hashed_password = Column(String, nullable=False)
+    hashed_password = Column(String, nullable=True)  # Allow null for OAuth users
     name = Column(String)
     is_active = Column(Boolean, default=True)
     is_superuser = Column(Boolean, default=False)
+    
+    # OAuth fields
+    google_id = Column(String, unique=True, nullable=True, index=True)
+    auth_provider = Column(String, default="local", nullable=False)  # 'local', 'google'
+    profile_picture = Column(String, nullable=True)
+    
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_login = Column(DateTime(timezone=True))
     failed_login_attempts = Column(Integer, default=0)
@@ -85,11 +91,17 @@ class Habit(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     name = Column(String, nullable=False)
+    is_favorite = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=func.now(), nullable=False)
     
     # Relationships
     user = relationship("User", back_populates="habits")
     streaks = relationship("HabitStreak", back_populates="habit", cascade="all, delete-orphan")
+    
+    # Unique constraint for user + name
+    __table_args__ = (
+        UniqueConstraint('user_id', 'name', name='uix_user_habit_name'),
+    )
 
 # HabitStreak model
 class HabitStreak(Base):
@@ -113,8 +125,10 @@ class MoodEntry(Base):
     
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    mood = Column(Integer, nullable=False)  # 1-10
-    rating = Column(Integer, nullable=False)  # 1-5
+    happiness = Column(Integer, nullable=False)  # 1-5
+    satisfaction = Column(Integer, nullable=False)  # 1-5
+    stress = Column(Integer, nullable=False)  # 1-5
+    day_rating = Column(Integer, nullable=False)  # 1-10
     entry_date = Column(Date, nullable=False, index=True)
     note = Column(Text)
     created_at = Column(DateTime, default=func.now(), nullable=False)
