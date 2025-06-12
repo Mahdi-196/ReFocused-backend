@@ -40,6 +40,20 @@ class RegisterSchema(BaseModel):
     name: Optional[str] = None
 
 
+class UserProfile(BaseModel):
+    id: int
+    email: str
+    name: Optional[str]
+    profile_picture: Optional[str]
+    is_active: bool
+    created_at: Optional[str]
+
+
+class ProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    profile_picture: Optional[str] = None
+
+
 async def authenticate_user(email: str, password: str, db: AsyncSession) -> User:
     result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
@@ -408,3 +422,92 @@ async def google_auth(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Authentication failed: {str(e)}"
         )
+
+
+async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)) -> User:
+    """Get current user from JWT token."""
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    
+    try:
+        # Check if token is blacklisted
+        if await TokenBlacklist.is_blacklisted(db, token):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has been revoked",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        user_id: int = payload.get("user_id")
+        if user_id is None:
+            raise credentials_exception
+            
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if user is None:
+            raise credentials_exception
+            
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Account is deactivated"
+            )
+            
+        return user
+        
+    except JWTError:
+        raise credentials_exception
+
+
+@router.get("/me", response_model=UserProfile)
+async def get_current_user_profile(
+    current_user: User = Depends(get_current_user)
+) -> UserProfile:
+    """Get current user profile information."""
+    return UserProfile(
+        id=current_user.id,
+        email=current_user.email,
+        name=current_user.name,
+        profile_picture=current_user.profile_picture,
+        is_active=current_user.is_active,
+        created_at=current_user.created_at.isoformat() if current_user.created_at else None
+    )
+
+
+@router.put("/profile", response_model=UserProfile)
+async def update_user_profile(
+    profile_data: ProfileUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> UserProfile:
+    """Update current user profile information."""
+    
+    # Update user fields
+    if profile_data.name is not None:
+        current_user.name = profile_data.name
+    if profile_data.profile_picture is not None:
+        current_user.profile_picture = profile_data.profile_picture
+    
+    await db.commit()
+    await db.refresh(current_user)
+    
+    # Log profile update
+    log_security_event(
+        event_type="profile_update",
+        details={"updated_fields": [k for k, v in profile_data.dict().items() if v is not None]},
+        level="info",
+        user_id=current_user.id
+    )
+    
+    return UserProfile(
+        id=current_user.id,
+        email=current_user.email,
+        name=current_user.name,
+        profile_picture=current_user.profile_picture,
+        is_active=current_user.is_active,
+        created_at=current_user.created_at.isoformat() if current_user.created_at else None
+    )

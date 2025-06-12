@@ -46,13 +46,18 @@ def is_private_ip(ip: str) -> bool:
         return False
 
 def get_client_ip(request: Request) -> str:
-    """Extract the client IP address from the request."""
-    if "X-Forwarded-For" in request.headers:
-        # Get the first IP in the chain which should be the client's IP
-        ip = request.headers["X-Forwarded-For"].split(",")[0].strip()
-        if is_valid_ip(ip):
-            return ip
+    """Get the real client IP address, considering proxies."""
+    # Check for common proxy headers
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    if forwarded_for:
+        # Take the first IP in the chain
+        return forwarded_for.split(",")[0].strip()
     
+    real_ip = request.headers.get("X-Real-IP")
+    if real_ip:
+        return real_ip
+    
+    # Fallback to direct client IP
     return request.client.host if request.client else "unknown"
 
 def check_content_security(content: str) -> bool:
@@ -116,4 +121,38 @@ def validate_request_security(request: Request, allowed_origins: List[str]) -> N
         if not verify_request_origin(request, allowed_origins):
             ip = get_client_ip(request)
             log_security_event("invalid_origin", ip, request)
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid origin") 
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid origin")
+
+def validate_content_type(content_type: str) -> bool:
+    """Validate if the content type is allowed."""
+    allowed_types = [
+        "application/json",
+        "multipart/form-data",
+        "application/x-www-form-urlencoded"
+    ]
+    
+    if not content_type:
+        return False
+    
+    return any(allowed_type in content_type for allowed_type in allowed_types)
+
+def sanitize_input(value: str, max_length: int = 1000) -> str:
+    """Sanitize user input by removing potentially dangerous characters."""
+    if not isinstance(value, str):
+        return str(value)[:max_length]
+    
+    # Remove null bytes and control characters
+    sanitized = ''.join(char for char in value if ord(char) >= 32 or char in '\t\n\r')
+    
+    return sanitized[:max_length]
+
+def validate_email_format(email: str) -> bool:
+    """Basic email format validation."""
+    import re
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return bool(re.match(pattern, email))
+
+def hash_sensitive_data(data: str) -> str:
+    """Hash sensitive data for logging purposes."""
+    import hashlib
+    return hashlib.sha256(data.encode()).hexdigest()[:16] 

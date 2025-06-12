@@ -17,7 +17,8 @@ from app.api.v1.api import api_router
 from app.core.security_middleware import (
     SecurityMiddleware,
     RequestValidationMiddleware,
-    SQLInjectionProtectionMiddleware
+    SQLInjectionProtectionMiddleware,
+    UserDataIsolationMiddleware
 )
 from app.core.security_monitor import SecurityMonitor
 from app.db.database import get_db, async_session
@@ -115,6 +116,7 @@ app.add_middleware(
 app.add_middleware(SecurityMiddleware)
 app.add_middleware(RequestValidationMiddleware)
 app.add_middleware(SQLInjectionProtectionMiddleware)
+app.add_middleware(UserDataIsolationMiddleware)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"] if not settings.is_production() else settings.TRUSTED_HOSTS)
 app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
 
@@ -140,8 +142,9 @@ async def google_oauth_coop_middleware(request: Request, call_next):
     # Set COOP headers to allow Google OAuth popups
     if "/auth/google" in str(request.url) or request.headers.get("referer", "").find("accounts.google.com") != -1:
         response.headers["Cross-Origin-Opener-Policy"] = "same-origin-allow-popups"
+        response.headers["Cross-Origin-Embedder-Policy"] = "unsafe-none"
     else:
-        response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+        response.headers["Cross-Origin-Opener-Policy"] = "same-origin-allow-popups"
     
     return response
 

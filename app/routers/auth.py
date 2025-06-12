@@ -201,11 +201,50 @@ async def logout(
 async def get_current_user_profile(
     current_user: User = Depends(get_current_active_user)
 ):
-    """Get current user profile."""
+    """Get current user profile information."""
     return UserProfile(
         id=current_user.id,
         email=current_user.email,
         name=current_user.name,
         is_active=current_user.is_active,
-        created_at=current_user.created_at.isoformat()
+        created_at=current_user.created_at.isoformat() if current_user.created_at else None
+    )
+
+class ProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    profile_picture: Optional[str] = None
+
+@router.put("/profile", response_model=UserProfile)
+async def update_user_profile(
+    profile_data: ProfileUpdate,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+    request: Request = None
+):
+    """Update current user profile information."""
+    client_ip = get_client_ip(request) if request else "unknown"
+    
+    # Update user fields
+    if profile_data.name is not None:
+        current_user.name = profile_data.name
+    if profile_data.profile_picture is not None:
+        current_user.profile_picture = profile_data.profile_picture
+    
+    db.commit()
+    db.refresh(current_user)
+    
+    # Log profile update
+    log_security_event(
+        event_type="profile_update",
+        details={"updated_fields": [k for k, v in profile_data.dict().items() if v is not None], "ip_address": client_ip},
+        level="info",
+        user_id=current_user.id
+    )
+    
+    return UserProfile(
+        id=current_user.id,
+        email=current_user.email,
+        name=current_user.name,
+        is_active=current_user.is_active,
+        created_at=current_user.created_at.isoformat() if current_user.created_at else None
     ) 

@@ -200,8 +200,8 @@ async def get_current_user(
         # Check if user is active
         if not user.is_active:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Inactive user"
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Account is deactivated"
             )
         
         # Log successful authentication
@@ -210,16 +210,49 @@ async def get_current_user(
         
         return user
         
-    except JWTError:
+    except Exception as e:
+        logger.error(f"Authentication error: {str(e)}")
         raise credentials_exception
 
 async def get_current_active_user(
     current_user: User = Depends(get_current_user)
 ) -> User:
-    """Get current active user."""
+    """Get current active user (additional check for account status)."""
     if not current_user.is_active:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Inactive user"
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is deactivated"
         )
-    return current_user 
+    return current_user
+
+# Helper function for non-request context authentication
+async def get_current_user_from_token(token: str, db: AsyncSession) -> User:
+    """Get current user from token without FastAPI request context."""
+    try:
+        payload = await TokenManager.verify_token(token, db)
+        user_id: int = payload.get("user_id")
+        
+        if user_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token"
+            )
+        
+        from sqlalchemy import select
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        
+        if user is None or not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found or inactive"
+            )
+        
+        return user
+        
+    except Exception as e:
+        logger.error(f"Token authentication error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials"
+        ) 
