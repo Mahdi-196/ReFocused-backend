@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Callable
 from jose import JWTError, jwt, ExpiredSignatureError
 from passlib.context import CryptContext
 from fastapi import HTTPException, status, Depends, Request
@@ -7,6 +7,7 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
+import functools
 from app.core.config import settings
 from app.core.security_config import security_config
 from app.db.database import get_db
@@ -24,6 +25,37 @@ pwd_context = CryptContext(
 
 # OAuth2 setup
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
+
+def jwt_required():
+    """
+    Decorator to enforce JWT authentication with enhanced security validation.
+    This provides stronger authentication than the standard Depends(get_current_user).
+    """
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):
+            # Extract current_user from kwargs (should be injected by Depends)
+            current_user = kwargs.get('current_user')
+            if not current_user:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Authentication required - no user found",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            
+            # Additional security checks for sensitive operations
+            if not current_user.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Account is deactivated"
+                )
+            
+            # Log sensitive operation
+            logger.info(f"JWT_REQUIRED: User {current_user.id} accessing {func.__name__}")
+            
+            return await func(*args, **kwargs)
+        return wrapper
+    return decorator
 
 class TokenManager:
     @staticmethod

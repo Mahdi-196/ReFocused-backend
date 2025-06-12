@@ -161,24 +161,42 @@ async def add_process_time_header(request: Request, call_next):
 # Security monitoring middleware
 @app.middleware("http")
 async def security_monitoring(request: Request, call_next):
-    async with async_session() as db:
-        security_monitor = SecurityMonitor(db)
+    # Skip security monitoring for auth endpoints and health checks to avoid conflicts
+    if any(path in str(request.url.path) for path in ["/auth/", "/health", "/docs", "/redoc", "/openapi.json"]):
+        return await call_next(request)
+    
+    try:
+        # Process the request first, then monitor
+        response = await call_next(request)
         
-        try:
-            # Get current user if authenticated
-            user = await get_current_user(request=request, db=db)
-            user_id = user.id if user else None
+        # Only monitor after successful request processing
+        async with async_session() as db:
+            security_monitor = SecurityMonitor(db)
             
-            # Monitor the request
-            await security_monitor.monitor_request(request, user_id)
+            # Try to get current user, but don't fail if not authenticated
+            user_id = None
+            try:
+                auth_header = request.headers.get("Authorization")
+                if auth_header and auth_header.startswith("Bearer "):
+                    token = auth_header.split(" ")[1]
+                    from app.core.auth import get_current_user_from_token
+                    user = await get_current_user_from_token(token, db)
+                    user_id = user.id if user else None
+            except Exception:
+                # User not authenticated or token invalid - that's fine
+                pass
             
-            # Process the request
-            response = await call_next(request)
-            return response
+            # Monitor the request without failing
+            try:
+                await security_monitor.monitor_request(request, user_id)
+            except Exception as e:
+                logger.warning(f"Security monitoring warning: {str(e)}")
+        
+        return response
             
-        except Exception as e:
-            logger.error(f"Security monitoring error: {str(e)}")
-            return await call_next(request)
+    except Exception as e:
+        logger.error(f"Security monitoring error: {str(e)}")
+        return await call_next(request)
 
 # Health check endpoint
 @app.get("/health")
