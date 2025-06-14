@@ -31,12 +31,7 @@ class UserStats(BaseModel):
     journal_collections_count: int
     account_age_days: int
 
-@router.get("/me", response_model=UserResponse)
-async def get_user_profile(
-    current_user: User = Depends(get_current_active_user)
-):
-    """Get the current user's profile."""
-    return current_user
+
 
 @router.get("/stats", response_model=UserStats)
 async def get_user_stats(

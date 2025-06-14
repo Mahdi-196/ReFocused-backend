@@ -21,8 +21,8 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         self.ip_blocklist: Dict[str, float] = {}
         
     async def dispatch(self, request: Request, call_next):
-        # Skip security checks for health endpoints
-        if request.url.path in ["/health", "/docs", "/redoc", "/openapi.json"]:
+        # Skip security checks for health endpoints and CORS preflight requests
+        if request.url.path in ["/health", "/docs", "/redoc", "/openapi.json"] or request.method == "OPTIONS":
             return await call_next(request)
         
         client_ip = get_client_ip(request)
@@ -119,8 +119,8 @@ class RequestValidationMiddleware(BaseHTTPMiddleware):
         self.max_request_size = 10 * 1024 * 1024  # 10MB limit
         
     async def dispatch(self, request: Request, call_next):
-        # Skip validation for auth endpoints and health checks
-        if any(path in request.url.path for path in ["/auth/", "/health", "/docs", "/redoc"]):
+        # Skip validation for auth endpoints, health checks, and CORS preflight requests
+        if any(path in request.url.path for path in ["/auth/", "/health", "/docs", "/redoc"]) or request.method == "OPTIONS":
             return await call_next(request)
         
         client_ip = get_client_ip(request)
@@ -225,25 +225,13 @@ class UserDataIsolationMiddleware(BaseHTTPMiddleware):
     """Middleware to ensure proper user data isolation."""
     
     async def dispatch(self, request: Request, call_next):
-        # Only apply to API endpoints that modify data
-        if not request.url.path.startswith("/api/v1/") or request.method in ["GET", "OPTIONS"]:
-            return await call_next(request)
-        
-        # Skip auth endpoints
-        if "/auth/" in request.url.path:
-            return await call_next(request)
-        
-        # Ensure user is authenticated for data modification
-        if not hasattr(request.state, 'user_id'):
-            return Response(
-                content="Authentication required",
-                status_code=status.HTTP_401_UNAUTHORIZED
-            )
+        # Skip middleware authentication check - let endpoints handle their own auth
+        # This middleware is now mainly for logging and debugging purposes
         
         response = await call_next(request)
         
         # Add user context to response headers for debugging (in dev mode only)
-        if settings.is_development():
+        if settings.is_development() and hasattr(request.state, 'user_id'):
             response.headers["X-User-Context"] = str(request.state.user_id)
         
         return response 

@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 
 from app.core.auth import get_current_user
-from app.db.session import get_db
+from app.db.database import get_db
 from app.db.models import User, Goal
 from app.schemas.goal import Goal as GoalSchema, GoalCreate, GoalUpdate, PriorityEnum
 from app.core.security import log_security_event
@@ -12,7 +12,7 @@ from app.core.security import log_security_event
 router = APIRouter()
 
 
-@router.get("/", response_model=List[GoalSchema])
+@router.get("", response_model=List[GoalSchema])
 async def get_goals(
     completed: Optional[bool] = Query(None, description="Filter by completion status"),
     priority: Optional[PriorityEnum] = Query(None, description="Filter by priority"),
@@ -43,7 +43,7 @@ async def get_goals(
     return goals
 
 
-@router.post("/", response_model=GoalSchema, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=GoalSchema, status_code=status.HTTP_201_CREATED)
 async def create_goal(
     goal_data: GoalCreate,
     current_user: User = Depends(get_current_user),

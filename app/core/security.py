@@ -55,23 +55,37 @@ def get_password_hash(password: str) -> str:
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
+    
+    # Add standard JWT claims
+    iat = datetime.utcnow()
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = iat + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = iat + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    
     to_encode.update({
-        "exp": expire,
-        "type": "access"
+        "iat": iat,  # Issued at
+        "nbf": iat,  # Not valid before
+        "exp": expire,  # Expiration
+        "jti": f"access_{int(iat.timestamp())}_{hash(str(data))}",  # JWT ID
+        "type": "access"  # Token type
     })
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt
 
 def create_refresh_token(data: dict) -> str:
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    
+    # Add standard JWT claims
+    iat = datetime.utcnow()
+    expire = iat + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    
     to_encode.update({
-        "exp": expire,
-        "type": "refresh"
+        "iat": iat,  # Issued at
+        "nbf": iat,  # Not valid before
+        "exp": expire,  # Expiration
+        "jti": f"refresh_{int(iat.timestamp())}_{hash(str(data))}",  # JWT ID
+        "type": "refresh"  # Token type
     })
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt

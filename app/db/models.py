@@ -93,6 +93,7 @@ class Habit(Base):
     name = Column(String, nullable=False)
     is_favorite = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=func.now(), nullable=False)
+    streak = Column(Integer, default=0, nullable=False)
     
     # Relationships
     user = relationship("User", back_populates="habits")

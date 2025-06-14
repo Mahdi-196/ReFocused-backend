@@ -16,7 +16,7 @@ from app.core.security import (
     log_security_event,
 )
 from app.core.auth import get_current_user  # Import from core auth module
-from app.db.session import get_db
+from app.db.database import get_db
 from app.db.models import User
 from app.db.models import TokenBlacklist
 from app.schemas.token import TokenResponse

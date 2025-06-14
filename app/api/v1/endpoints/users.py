@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from app.core.config import settings
 from app.core.security import log_security_event
 from app.core.auth import get_current_user, jwt_required
-from app.db.session import get_db
+from app.db.database import get_db
 from app.db.models import User, Goal, Habit, MoodEntry
 from app.schemas.user import UserResponse
 from datetime import date

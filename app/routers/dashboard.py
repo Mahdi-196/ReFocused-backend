@@ -10,7 +10,7 @@ from app.db.models import Habit, HabitStreak, MoodEntry
 from app.schemas.dashboard import DailyEntryResponse, DailyEntryCreate
 from app.schemas.habit import HabitCompletionResponse
 from app.schemas.mood import MoodResponse
-from app.schemas.user import UserInDB
+from app.db.models import User
 from app.crud.habit import HabitCRUD
 from app.crud.mood import MoodCRUD
 
@@ -20,7 +20,7 @@ router = APIRouter()
 async def get_daily_entries(
     month: Optional[str] = Query(None, description="Filter by month (YYYY-MM format)"),
     db: AsyncSession = Depends(get_db),
-    current_user: UserInDB = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """Get daily entries (mood + habit completions) for a month"""
     try:
@@ -130,7 +130,7 @@ async def get_daily_entries(
 async def create_daily_entry(
     entry: DailyEntryCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: UserInDB = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """Create or update a daily entry with mood and habit completions"""
     try:

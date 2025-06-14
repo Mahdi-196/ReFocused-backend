@@ -7,7 +7,7 @@ from app.db.database import get_db
 from app.core.auth import get_current_user
 from app.crud.mood import MoodCRUD
 from app.schemas.mood import MoodCreate, MoodUpdate, MoodResponse
-from app.schemas.user import UserInDB
+from app.db.models import User
 
 router = APIRouter()
 
@@ -15,7 +15,7 @@ router = APIRouter()
 async def get_mood_entries(
     month: Optional[str] = Query(None, description="Filter by month (YYYY-MM format)"),
     db: AsyncSession = Depends(get_db),
-    current_user: UserInDB = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """Get mood entries for the current user, optionally filtered by month"""
     entries = await MoodCRUD.get_mood_entries(db, current_user.id, month)
@@ -38,7 +38,7 @@ async def get_mood_entries(
 async def get_mood_entry(
     entry_date: date,
     db: AsyncSession = Depends(get_db),
-    current_user: UserInDB = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """Get mood entry for a specific date"""
     entry = await MoodCRUD.get_mood_entry(db, current_user.id, entry_date)
@@ -63,7 +63,7 @@ async def get_mood_entry(
 async def create_mood_entry(
     mood: MoodCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: UserInDB = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """Create or update a mood entry (upsert)"""
     try:
@@ -89,7 +89,7 @@ async def update_mood_entry(
     entry_date: date,
     mood: MoodUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: UserInDB = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """Update a mood entry for a specific date"""
     updated_entry = await MoodCRUD.update_mood_entry(db, entry_date, mood, current_user.id)
@@ -114,7 +114,7 @@ async def update_mood_entry(
 async def delete_mood_entry(
     entry_date: date,
     db: AsyncSession = Depends(get_db),
-    current_user: UserInDB = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """Delete a mood entry for a specific date"""
     success = await MoodCRUD.delete_mood_entry(db, entry_date, current_user.id)

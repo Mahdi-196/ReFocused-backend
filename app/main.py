@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Response, Depends
+from fastapi import FastAPI, Request, Response, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -7,6 +7,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 import logging
 from datetime import datetime
 from fastapi.responses import JSONResponse
@@ -83,36 +84,19 @@ app = FastAPI(
 
 # HTTPS will be handled by AWS infrastructure (ALB/CloudFront)
 
-# CORS middleware configuration for frontend-backend connection
+# CORS must be the FIRST middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000",  # React default
-        "http://localhost:3001",  # Alternative React port
-        "http://localhost:5173",  # Vite default
-        "http://localhost:5174",  # Alternative Vite port
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:5173",
-        # Add your production frontend URL here when ready
+        "http://localhost:3000",
+        "http://127.0.0.1:3000"
     ],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-    allow_headers=[
-        "Authorization",
-        "Content-Type",
-        "Accept",
-        "Origin",
-        "User-Agent",
-        "DNT",
-        "Cache-Control",
-        "X-Mx-ReqToken",
-        "Keep-Alive",
-        "X-Requested-With",
-        "If-Modified-Since",
-    ],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
 )
 
-# Add security middleware
+# Add security middleware after CORS
 app.add_middleware(SecurityMiddleware)
 app.add_middleware(RequestValidationMiddleware)
 app.add_middleware(SQLInjectionProtectionMiddleware)
@@ -161,8 +145,8 @@ async def add_process_time_header(request: Request, call_next):
 # Security monitoring middleware
 @app.middleware("http")
 async def security_monitoring(request: Request, call_next):
-    # Skip security monitoring for auth endpoints and health checks to avoid conflicts
-    if any(path in str(request.url.path) for path in ["/auth/", "/health", "/docs", "/redoc", "/openapi.json"]):
+    # Skip security monitoring for auth endpoints, health checks, and CORS preflight requests
+    if any(path in str(request.url.path) for path in ["/auth/", "/health", "/docs", "/redoc", "/openapi.json"]) or request.method == "OPTIONS":
         return await call_next(request)
     
     try:
@@ -205,6 +189,36 @@ async def health_check():
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat()
     }
+
+# Debug endpoint for troubleshooting
+@app.get("/debug/headers")
+async def debug_headers(request: Request):
+    """Debug endpoint to check what headers are being received"""
+    return {
+        "headers": dict(request.headers),
+        "method": request.method,
+        "url": str(request.url),
+        "client": request.client.host if request.client else None
+    }
+
+# Debug auth endpoint
+@app.get("/debug/auth")
+async def debug_auth(request: Request, db: AsyncSession = Depends(get_db)):
+    """Debug endpoint to test authentication"""
+    auth_header = request.headers.get("Authorization")
+    if not auth_header:
+        return {"error": "No Authorization header found", "headers": dict(request.headers)}
+    
+    if not auth_header.startswith("Bearer "):
+        return {"error": "Authorization header doesn't start with 'Bearer '", "auth_header": auth_header}
+    
+    token = auth_header.split(" ")[1]
+    try:
+        from app.core.auth import get_current_user_from_token
+        user = await get_current_user_from_token(token, db)
+        return {"success": True, "user_id": user.id, "user_email": user.email}
+    except Exception as e:
+        return {"error": str(e), "token_preview": token[:20] + "..." if len(token) > 20 else token}
 
 # Security metrics endpoint
 @app.get("/security/metrics")
@@ -285,4 +299,26 @@ async def root():
             "logout": "/api/v1/auth/logout",
             "profile": "/api/v1/auth/me"
         }
-    } 
+    }
+
+# Catch-all for missing API prefix - redirect to correct endpoints
+@app.get("/goals")
+async def redirect_goals():
+    raise HTTPException(
+        status_code=404,
+        detail="Endpoint not found. Did you mean '/api/v1/goals'? Make sure your frontend API base URL includes '/api/v1'"
+    )
+
+@app.get("/habits")
+async def redirect_habits():
+    raise HTTPException(
+        status_code=404,
+        detail="Endpoint not found. Did you mean '/api/v1/habits'? Make sure your frontend API base URL includes '/api/v1'"
+    )
+
+@app.get("/auth/{path:path}")
+async def redirect_auth(path: str):
+    raise HTTPException(
+        status_code=404,
+        detail=f"Endpoint not found. Did you mean '/api/v1/auth/{path}'? Make sure your frontend API base URL includes '/api/v1'"
+    ) 

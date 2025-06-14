@@ -28,6 +28,11 @@ class HabitCompletionBase(BaseModel):
 class HabitCompletionCreate(HabitCompletionBase):
     date: date
 
+class HabitCompletionUpdate(BaseModel):
+    habit_id: int
+    date: date
+    completed: bool
+
 class HabitCompletionResponse(HabitCompletionBase):
     id: int
     date: date

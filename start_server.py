@@ -5,10 +5,16 @@ Server startup script with proper environment variable loading.
 
 import os
 import sys
+import argparse
 from dotenv import load_dotenv
 
 def main():
     """Start the server with proper environment loading."""
+    
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Start the FastAPI server')
+    parser.add_argument('--port', type=int, default=8000, help='Port to run the server on')
+    args = parser.parse_args()
     
     # Load environment variables from .env file
     env_loaded = load_dotenv()
@@ -45,17 +51,17 @@ def main():
     os.environ.setdefault('APP_ENV', 'development')
     os.environ.setdefault('DEBUG', 'true')
     
-    print("🚀 Starting FastAPI server...")
-    print("📡 Server will be available at: http://localhost:8000")
-    print("📚 API docs at: http://localhost:8000/docs")
-    print("🔧 Google OAuth endpoint: http://localhost:8000/api/v1/auth/google")
+    print(f"🚀 Starting FastAPI server...")
+    print(f"📡 Server will be available at: http://localhost:{args.port}")
+    print(f"📚 API docs at: http://localhost:{args.port}/docs")
+    print(f"🔧 Google OAuth endpoint: http://localhost:{args.port}/api/v1/auth/google")
     
     # Start the server
     import uvicorn
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
-        port=8000,
+        port=args.port,
         reload=True,
         log_level="info"
     )
