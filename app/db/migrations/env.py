@@ -5,8 +5,8 @@ from sqlalchemy.engine import Connection
 
 from alembic import context
 
-from app.db.models import Base
-from app.db.session import DATABASE_URL
+from app.db.database import Base
+from app.core.config import settings
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -19,6 +19,7 @@ if config.config_file_name is not None:
 
 # Override sqlalchemy.url from alembic.ini with our DATABASE_URL
 # For migrations, use a non-async version of the URL
+DATABASE_URL = settings.DATABASE_URL
 if "sqlite+aiosqlite" in DATABASE_URL:
     sync_url = DATABASE_URL.replace("sqlite+aiosqlite", "sqlite")
 elif "postgresql+asyncpg" in DATABASE_URL:

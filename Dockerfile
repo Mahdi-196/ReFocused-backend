@@ -1,46 +1,41 @@
 # Use Python 3.11 slim image for smaller size
 FROM python:3.11-slim
 
+# Set working directory
+WORKDIR /app
+
 # Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=off \
+    PIP_DISABLE_PIP_VERSION_CHECK=on
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    libpq-dev \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user for security
-RUN useradd --create-home --shell /bin/bash app
+# Create a non-root user
+RUN useradd -m -u 1000 app && \
+    chown -R app:app /app
 
-# Set work directory
-WORKDIR /app
-
-# Copy requirements first for better Docker layer caching
-COPY requirements.txt .
-
-# Install Python dependencies
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
-
-# Copy application code
-COPY . .
-
-# Change ownership to app user
-RUN chown -R app:app /app
-
-# Switch to non-root user
+# Switch to non-root user for subsequent operations
 USER app
 
-# Expose port
+# Install Python dependencies
+COPY --chown=app:app requirements.txt .
+RUN pip install --no-cache-dir --upgrade -r requirements.txt
+
+# Copy application code
+COPY --chown=app:app . .
+
+# Expose the port the app runs on
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+# Command to run the application
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
-# Run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"] 
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1 

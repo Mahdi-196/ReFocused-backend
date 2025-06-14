@@ -1,15 +1,16 @@
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, content, goals, users, study
+from app.api.v1.endpoints import auth, content, goals, users, study, study_v2
 from app.routers import habits, mood, dashboard
 
 api_router = APIRouter()
 
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(content.router, prefix="/content", tags=["content"])
-api_router.include_router(users.router, prefix="/user", tags=["users"])
+api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(goals.router, prefix="/goals", tags=["goals"])
 api_router.include_router(habits.router, prefix="/habits", tags=["habits"])
 api_router.include_router(mood.router, prefix="/mood", tags=["mood"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
-api_router.include_router(study.router, prefix="/study/sets", tags=["study"]) 
+api_router.include_router(study.router, prefix="/study/sets", tags=["study sets"])
+api_router.include_router(study_v2.router, prefix="/study/v2/sets", tags=["study sets v2"]) 

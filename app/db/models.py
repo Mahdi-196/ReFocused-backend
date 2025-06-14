@@ -158,7 +158,7 @@ class PomodoroSettings(Base):
     # Relationships
     user = relationship("User", back_populates="pomodoro_settings")
 
-# StudySet model
+# StudySet model - with optimized indexes
 class StudySet(Base):
     __tablename__ = "study_sets"
     
@@ -170,19 +170,34 @@ class StudySet(Base):
     # Relationships
     user = relationship("User", back_populates="study_sets")
     flashcards = relationship("Flashcard", back_populates="set", cascade="all, delete-orphan")
+    
+    # Indexes for performance optimization
+    __table_args__ = (
+        # Index for faster lookups by user_id and creation date
+        Index('idx_studyset_user_created', user_id, created_at.desc()),
+        # Index for searching by title
+        Index('idx_studyset_title', title),
+    )
 
-# Flashcard model
+# Flashcard model - with optimized indexes
 class Flashcard(Base):
     __tablename__ = "flashcards"
     
     id = Column(Integer, primary_key=True)
-    set_id = Column(Integer, ForeignKey("study_sets.id"), nullable=False, index=True)
+    set_id = Column(Integer, ForeignKey("study_sets.id", ondelete="CASCADE"), nullable=False)
     question = Column(Text, nullable=False)
     answer = Column(Text, nullable=False)
     created_at = Column(DateTime, default=func.now(), nullable=False)
     
-    # Relationships
+    # Relationship
     set = relationship("StudySet", back_populates="flashcards")
+    
+    # Indexes for performance optimization
+    __table_args__ = (
+        # Index for faster lookups by set_id
+        Index('idx_flashcard_set', set_id),
+        # Text search index would be better implemented using database-specific methods
+    )
 
 # Mantra model
 class Mantra(Base):
