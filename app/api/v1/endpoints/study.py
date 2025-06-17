@@ -404,4 +404,60 @@ async def delete_study_set(
     # Commit the transaction to save changes
     await db.commit()
     
+    return None
+
+@router.delete("/{study_set_id}/cards/{card_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_flashcard(
+    study_set_id: int,
+    card_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Delete a specific flashcard from a study set
+    """
+    # First verify the study set exists and belongs to the current user
+    result = await db.execute(
+        select(StudySet).where(
+            StudySet.id == study_set_id,
+            StudySet.user_id == current_user.id
+        )
+    )
+    study_set = result.scalars().first()
+    
+    if not study_set:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Study set not found or not owned by current user"
+        )
+    
+    # Now verify the flashcard exists and belongs to this study set
+    result = await db.execute(
+        select(Flashcard).where(
+            Flashcard.id == card_id,
+            Flashcard.set_id == study_set_id
+        )
+    )
+    flashcard = result.scalars().first()
+    
+    if not flashcard:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Flashcard not found or does not belong to the specified study set"
+        )
+    
+    await log_study_set_operation(
+        db=db,
+        event_type="DELETE_CARD",
+        user_id=current_user.id,
+        ip_address=request.client.host,
+        details=f"Deleted flashcard ID {card_id} from study set ID {study_set_id}"
+    )
+    
+    # Delete the flashcard
+    await db.delete(flashcard)
+    # Commit the transaction to save changes
+    await db.commit()
+    
     return None 

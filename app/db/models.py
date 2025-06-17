@@ -1,6 +1,6 @@
 from sqlalchemy import (
     Column, Integer, String, Text, DateTime, Date, 
-    ForeignKey, Boolean, UniqueConstraint, Index
+    ForeignKey, Boolean, UniqueConstraint, Index, Float
 )
 from sqlalchemy.orm import relationship, DeclarativeBase
 from sqlalchemy.sql import func
@@ -50,6 +50,7 @@ class User(Base):
     study_sets = relationship("StudySet", back_populates="user", cascade="all, delete-orphan")
     mantras = relationship("Mantra", back_populates="user", cascade="all, delete-orphan")
     journal_collections = relationship("JournalCollection", back_populates="user", cascade="all, delete-orphan")
+    statistics = relationship("UserStatistics", back_populates="user", cascade="all, delete-orphan")
 
 # Goal model
 class Goal(Base):
@@ -158,7 +159,7 @@ class PomodoroSettings(Base):
     # Relationships
     user = relationship("User", back_populates="pomodoro_settings")
 
-# StudySet model - with optimized indexes
+# StudySet model
 class StudySet(Base):
     __tablename__ = "study_sets"
     
@@ -170,34 +171,19 @@ class StudySet(Base):
     # Relationships
     user = relationship("User", back_populates="study_sets")
     flashcards = relationship("Flashcard", back_populates="set", cascade="all, delete-orphan")
-    
-    # Indexes for performance optimization
-    __table_args__ = (
-        # Index for faster lookups by user_id and creation date
-        Index('idx_studyset_user_created', user_id, created_at.desc()),
-        # Index for searching by title
-        Index('idx_studyset_title', title),
-    )
 
-# Flashcard model - with optimized indexes
+# Flashcard model
 class Flashcard(Base):
     __tablename__ = "flashcards"
     
     id = Column(Integer, primary_key=True)
-    set_id = Column(Integer, ForeignKey("study_sets.id", ondelete="CASCADE"), nullable=False)
+    set_id = Column(Integer, ForeignKey("study_sets.id"), nullable=False, index=True)
     question = Column(Text, nullable=False)
     answer = Column(Text, nullable=False)
     created_at = Column(DateTime, default=func.now(), nullable=False)
     
-    # Relationship
+    # Relationships
     set = relationship("StudySet", back_populates="flashcards")
-    
-    # Indexes for performance optimization
-    __table_args__ = (
-        # Index for faster lookups by set_id
-        Index('idx_flashcard_set', set_id),
-        # Text search index would be better implemented using database-specific methods
-    )
 
 # Mantra model
 class Mantra(Base):
@@ -348,4 +334,24 @@ class SecurityAlert(Base):
         self.resolved = True
         self.resolved_at = datetime.utcnow()
         db.commit()
-        return self 
+        return self
+
+# UserStatistics model
+class UserStatistics(Base):
+    __tablename__ = "user_statistics"
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    date = Column(Date, nullable=False, default=func.current_date())
+    focus_time_seconds = Column(Integer, default=0)
+    completed_sessions = Column(Integer, default=0)
+    completed_tasks = Column(Integer, default=0)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    
+    # Relationships
+    user = relationship("User", back_populates="statistics")
+    
+    # Unique constraint to ensure one record per user per date
+    __table_args__ = (
+        UniqueConstraint('user_id', 'date', name='user_date_unique'),
+    ) 

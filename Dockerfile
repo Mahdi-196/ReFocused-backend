@@ -1,41 +1,51 @@
-# Use Python 3.11 slim image for smaller size
-FROM python:3.11-slim
+# Multi-stage build for smaller production image
+FROM python:3.11-slim as builder
 
-# Set working directory
-WORKDIR /app
-
-# Set environment variables
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=off \
-    PIP_DISABLE_PIP_VERSION_CHECK=on
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    curl \
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Create a non-root user
-RUN useradd -m -u 1000 app && \
-    chown -R app:app /app
+# Copy requirements and install dependencies
+COPY requirements.txt .
+RUN pip install --user --no-cache-dir --upgrade pip && \
+    pip install --user --no-cache-dir -r requirements.txt
 
-# Switch to non-root user for subsequent operations
-USER app
+# Production stage
+FROM python:3.11-slim
 
-# Install Python dependencies
-COPY --chown=app:app requirements.txt .
-RUN pip install --no-cache-dir --upgrade -r requirements.txt
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH=/home/app/.local/bin:$PATH
 
-# Copy application code
+# Install runtime dependencies only
+RUN apt-get update && apt-get install -y \
+    libpq5 \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Create non-root user
+RUN useradd --create-home --shell /bin/bash app
+
+# Copy Python packages from builder
+COPY --from=builder /root/.local /home/app/.local
+
+# Set work directory and copy app
+WORKDIR /app
 COPY --chown=app:app . .
 
-# Expose the port the app runs on
+# Switch to non-root user
+USER app
+
+# Expose port
 EXPOSE 8000
 
-# Command to run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
-
 # Health check
-HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1 
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Run the application
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"] 

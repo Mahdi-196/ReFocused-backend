@@ -1,62 +1,63 @@
-version: "3.8"
+version: '3.8'
 
 services:
-  app:
-    build: .
-    container_name: refocused-api
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: refocused-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-refocused}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-refocused}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
+    command: >
+      postgres 
+      -c max_connections=200
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+      -c maintenance_work_mem=64MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+
+  # FastAPI Backend
+  backend:
+    build: .
+    container_name: refocused-backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:password@postgres:5432/refocused-local-testing
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production}
+      APP_ENV: development
+      DEBUG: "true"
+      HOST: 0.0.0.0
+      PORT: 8000
     ports:
       - "8000:8000"
-    volumes:
-      - ./:/app
-    env_file:
-      - .env
-    environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/refocused
-      - PORT=8000
-      - APP_ENV=development
     depends_on:
-      - db
+      postgres:
+        condition: service_healthy
+    volumes:
+      - .:/app
+      - /app/venv_mac  # Exclude local venv from container
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
-      retries: 5
-      start_period: 30s
-
-  db:
-    image: postgres:15-alpine
-    container_name: refocused-db
+      retries: 3
     restart: unless-stopped
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=refocused
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
-  pgadmin:
-    image: dpage/pgadmin4
-    container_name: refocused-pgadmin
-    restart: unless-stopped
-    ports:
-      - "5050:80"
-    environment:
-      - PGADMIN_DEFAULT_EMAIL=admin@refocused.app
-      - PGADMIN_DEFAULT_PASSWORD=admin
-    depends_on:
-      - db
-    volumes:
-      - pgadmin_data:/var/lib/pgadmin
 
 volumes:
   postgres_data:
-  pgadmin_data: 
+    driver: local 

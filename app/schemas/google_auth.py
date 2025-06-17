@@ -3,12 +3,12 @@ from typing import Optional
 
 class GoogleAuthRequest(BaseModel):
     """Request model for Google OAuth authentication."""
-    token: str
+    id_token: str
     
-    @validator('token')
+    @validator('id_token')
     def validate_token(cls, v):
         if not v or not v.strip():
-            raise ValueError('Token cannot be empty')
+            raise ValueError('ID token cannot be empty')
         return v.strip()
 
 class UserResponse(BaseModel):

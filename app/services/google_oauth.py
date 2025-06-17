@@ -71,6 +71,19 @@ class GoogleOAuthService:
             logger.error(f"Unexpected error during Google token verification: {str(e)}")
             return None
     
+    async def verify_id_token(self, id_token: str) -> Optional[Dict[str, Any]]:
+        """
+        Verify Google ID token and extract user information.
+        Alias for verify_token method to match auth endpoint expectations.
+        
+        Args:
+            id_token: Google ID token from frontend
+            
+        Returns:
+            Dict containing user info if valid, None if invalid
+        """
+        return await self.verify_token(id_token)
+    
     def extract_username_from_email(self, email: str) -> str:
         """
         Extract username from email address.

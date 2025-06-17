@@ -18,7 +18,6 @@ def main():
     
     # Load environment variables from .env file
     env_loaded = load_dotenv()
-    print(f"✅ Environment file loaded: {env_loaded}")
     
     # Ensure required environment variables are set
     required_vars = [
@@ -28,22 +27,11 @@ def main():
         'GOOGLE_CLIENT_SECRET'
     ]
     
-    missing_vars = []
-    for var in required_vars:
-        value = os.getenv(var)
-        if not value:
-            missing_vars.append(var)
-        else:
-            # Only show first few chars of sensitive data
-            if 'SECRET' in var or 'CLIENT_SECRET' in var:
-                display_value = f"{value[:10]}..."
-            else:
-                display_value = value
-            print(f"✅ {var}: {display_value}")
+    missing_vars = [var for var in required_vars if not os.getenv(var)]
     
     if missing_vars:
-        print(f"❌ Missing required environment variables: {missing_vars}")
-        print("Please check your .env file or environment setup.")
+        import logging
+        logging.error(f"Missing required environment variables: {missing_vars}")
         sys.exit(1)
     
     # Set default values for server
@@ -51,10 +39,7 @@ def main():
     os.environ.setdefault('APP_ENV', 'development')
     os.environ.setdefault('DEBUG', 'true')
     
-    print(f"🚀 Starting FastAPI server...")
-    print(f"📡 Server will be available at: http://localhost:{args.port}")
-    print(f"📚 API docs at: http://localhost:{args.port}/docs")
-    print(f"🔧 Google OAuth endpoint: http://localhost:{args.port}/api/v1/auth/google")
+    # Server info logged by uvicorn
     
     # Start the server
     import uvicorn

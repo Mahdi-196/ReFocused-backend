@@ -1,0 +1,38 @@
+# Core FastAPI & Web Framework
+fastapi==0.110.0
+uvicorn==0.34.2
+gunicorn==21.2.0
+starlette==0.36.3
+
+# Database & ORM
+asyncpg==0.30.0
+psycopg2-binary==2.9.10
+sqlalchemy==2.0.41
+alembic==1.16.1
+
+# Authentication & Security
+bcrypt==4.3.0
+python-jose==3.4.0
+passlib==1.7.4
+cryptography==45.0.2
+
+# HTTP & Requests
+httpx==0.28.1
+requests==2.32.3
+
+# Data Validation & Settings
+pydantic==2.11.5
+pydantic-settings==2.9.1
+python-dotenv==1.1.0
+
+# Google OAuth
+google-auth==2.40.2
+google-auth-oauthlib==1.2.2
+
+# Development & Utilities (remove in production)
+bandit==1.7.7
+safety==2.3.5
+autoflake==2.3.1
+
+# Optional - Remove if not using GraphQL
+# strawberry-graphql==0.215.1 

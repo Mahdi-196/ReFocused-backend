@@ -13,23 +13,26 @@ router = APIRouter()
 
 @router.get("/", response_model=List[MoodResponse])
 async def get_mood_entries(
-    month: Optional[str] = Query(None, description="Filter by month (YYYY-MM format)"),
+    start_date: Optional[date] = Query(None, description="Start date for filtering (YYYY-MM-DD)"),
+    end_date: Optional[date] = Query(None, description="End date for filtering (YYYY-MM-DD)"),
+    month: Optional[str] = Query(None, description="Filter by month (YYYY-MM format) - legacy support"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get mood entries for the current user, optionally filtered by month"""
-    entries = await MoodCRUD.get_mood_entries(db, current_user.id, month)
+    """Get mood entries for the current user with optional date filtering"""
+    entries = await MoodCRUD.get_mood_entries(db, current_user.id, start_date, end_date, month)
+    
     # Convert to response format
     return [
         MoodResponse(
             id=entry.id,
+            user_id=entry.user_id,
+            date=entry.entry_date,
             happiness=entry.happiness,
             satisfaction=entry.satisfaction,
             stress=entry.stress,
-            day_rating=entry.day_rating,
-            note=entry.note,
-            date=entry.entry_date,
-            created_at=entry.created_at
+            created_at=entry.created_at,
+            updated_at=getattr(entry, 'updated_at', None)
         )
         for entry in entries
     ]
@@ -45,21 +48,21 @@ async def get_mood_entry(
     if not entry:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Mood entry not found for this date"
+            detail="No mood entry found for this date"
         )
     
     return MoodResponse(
         id=entry.id,
+        user_id=entry.user_id,
+        date=entry.entry_date,
         happiness=entry.happiness,
         satisfaction=entry.satisfaction,
         stress=entry.stress,
-        day_rating=entry.day_rating,
-        note=entry.note,
-        date=entry.entry_date,
-        created_at=entry.created_at
+        created_at=entry.created_at,
+        updated_at=getattr(entry, 'updated_at', None)
     )
 
-@router.post("/", response_model=MoodResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=MoodResponse)
 async def create_mood_entry(
     mood: MoodCreate,
     db: AsyncSession = Depends(get_db),
@@ -70,18 +73,18 @@ async def create_mood_entry(
         entry = await MoodCRUD.upsert_mood_entry(db, mood, current_user.id)
         return MoodResponse(
             id=entry.id,
+            user_id=entry.user_id,
+            date=entry.entry_date,
             happiness=entry.happiness,
             satisfaction=entry.satisfaction,
             stress=entry.stress,
-            day_rating=entry.day_rating,
-            note=entry.note,
-            date=entry.entry_date,
-            created_at=entry.created_at
+            created_at=entry.created_at,
+            updated_at=getattr(entry, 'updated_at', None)
         )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create mood entry"
+            detail=f"Failed to create mood entry: {str(e)}"
         )
 
 @router.put("/{entry_date}", response_model=MoodResponse)
@@ -101,13 +104,13 @@ async def update_mood_entry(
     
     return MoodResponse(
         id=updated_entry.id,
+        user_id=updated_entry.user_id,
+        date=updated_entry.entry_date,
         happiness=updated_entry.happiness,
         satisfaction=updated_entry.satisfaction,
         stress=updated_entry.stress,
-        day_rating=updated_entry.day_rating,
-        note=updated_entry.note,
-        date=updated_entry.entry_date,
-        created_at=updated_entry.created_at
+        created_at=updated_entry.created_at,
+        updated_at=getattr(updated_entry, 'updated_at', None)
     )
 
 @router.delete("/{entry_date}", status_code=status.HTTP_204_NO_CONTENT)

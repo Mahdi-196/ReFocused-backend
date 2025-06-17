@@ -266,13 +266,13 @@ async def google_auth(
     logger = logging.getLogger(__name__)
     
     try:
-        logger.info(f"Google OAuth request received with token length: {len(request.token)}")
+        logger.info(f"Google OAuth request received with token length: {len(request.id_token)}")
         
         google_service = GoogleOAuthService()
         
         # Verify Google token and extract user info
         logger.info("Attempting to verify Google token...")
-        user_info = await google_service.verify_token(request.token)
+        user_info = await google_service.verify_token(request.id_token)
         
         if not user_info:
             logger.warning("Google token verification failed - invalid token")

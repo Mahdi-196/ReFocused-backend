@@ -14,13 +14,13 @@ class Settings(BaseSettings):
     HOST: str = Field("0.0.0.0", env="HOST")
     PORT: int = Field(8000, env="PORT")
 
-    # Auth
-    SECRET_KEY: str = Field("dev-secret-key-change-in-production", env="SECRET_KEY")
+    # Auth - Secure defaults
+    SECRET_KEY: str = Field(..., env="SECRET_KEY", min_length=32)  # Force secret key to be set
     ALGORITHM: str = Field("HS256", env="ALGORITHM")
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(30, env="ACCESS_TOKEN_EXPIRE_MINUTES")
-    REFRESH_TOKEN_EXPIRE_DAYS: int = Field(7, env="REFRESH_TOKEN_EXPIRE_DAYS")
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(15, env="ACCESS_TOKEN_EXPIRE_MINUTES")  # Shorter for security
+    REFRESH_TOKEN_EXPIRE_DAYS: int = Field(1, env="REFRESH_TOKEN_EXPIRE_DAYS")  # Shorter for security
     PASSWORD_HASHER: str = Field("bcrypt", env="PASSWORD_HASHER")
-    BCRYPT_ROUNDS: int = Field(12, env="BCRYPT_ROUNDS")
+    BCRYPT_ROUNDS: int = Field(14, env="BCRYPT_ROUNDS")  # Higher rounds for security
     
     # Google OAuth
     GOOGLE_CLIENT_ID: Optional[str] = Field(None, env="GOOGLE_CLIENT_ID")

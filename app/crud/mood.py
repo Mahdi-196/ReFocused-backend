@@ -7,11 +7,30 @@ from app.schemas.mood import MoodCreate, MoodUpdate
 
 class MoodCRUD:
     @staticmethod
-    async def get_mood_entries(db: AsyncSession, user_id: int, month: Optional[str] = None) -> List[MoodEntry]:
-        """Get mood entries for a user, optionally filtered by month (YYYY-MM format)"""
+    async def get_mood_entries(
+        db: AsyncSession, 
+        user_id: int, 
+        start_date: Optional[date] = None, 
+        end_date: Optional[date] = None, 
+        month: Optional[str] = None
+    ) -> List[MoodEntry]:
+        """Get mood entries for a user with optional date range filtering"""
         query = select(MoodEntry).where(MoodEntry.user_id == user_id)
         
-        if month:
+        # Date range filtering takes priority over month filtering
+        if start_date and end_date:
+            query = query.where(
+                and_(
+                    MoodEntry.entry_date >= start_date,
+                    MoodEntry.entry_date <= end_date
+                )
+            )
+        elif start_date:
+            query = query.where(MoodEntry.entry_date >= start_date)
+        elif end_date:
+            query = query.where(MoodEntry.entry_date <= end_date)
+        elif month:
+            # Fallback to month filtering if no date range provided
             try:
                 year, month_num = map(int, month.split('-'))
                 query = query.where(
@@ -42,15 +61,15 @@ class MoodCRUD:
     
     @staticmethod
     async def create_mood_entry(db: AsyncSession, mood: MoodCreate, user_id: int) -> MoodEntry:
-        """Create a new mood entry"""
+        """Create a new mood entry with default values for optional fields"""
         db_mood = MoodEntry(
             user_id=user_id,
             happiness=mood.happiness,
             satisfaction=mood.satisfaction,
             stress=mood.stress,
-            day_rating=mood.day_rating,
+            day_rating=3,  # Default middle value
             entry_date=mood.date,
-            note=mood.note
+            note=""  # Default empty note
         )
         db.add(db_mood)
         await db.commit()
@@ -73,6 +92,7 @@ class MoodCRUD:
         if not db_mood:
             return None
         
+        # Only update fields that are provided
         update_data = mood.dict(exclude_unset=True)
         for field, value in update_data.items():
             setattr(db_mood, field, value)
@@ -89,9 +109,10 @@ class MoodCRUD:
         
         if existing:
             # Update existing entry
-            update_data = mood.dict(exclude={'date'})
-            for field, value in update_data.items():
-                setattr(existing, field, value)
+            existing.happiness = mood.happiness
+            existing.satisfaction = mood.satisfaction
+            existing.stress = mood.stress
+            # Keep existing day_rating and note if they exist
             
             await db.commit()
             await db.refresh(existing)
