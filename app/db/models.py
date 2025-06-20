@@ -343,7 +343,7 @@ class UserStatistics(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     date = Column(Date, nullable=False, default=func.current_date())
-    focus_time_seconds = Column(Integer, default=0)
+    focus_time_minutes = Column(Integer, default=0)
     completed_sessions = Column(Integer, default=0)
     completed_tasks = Column(Integer, default=0)
     created_at = Column(DateTime, default=func.now(), nullable=False)

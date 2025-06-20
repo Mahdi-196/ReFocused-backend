@@ -4,7 +4,7 @@ from datetime import date
 
 # Request schemas
 class FocusTimeUpdate(BaseModel):
-    seconds: int = Field(..., ge=0, description="Focus time in seconds to add")
+    minutes: int = Field(..., ge=0, description="Focus time in minutes to add")
 
 class SessionsUpdate(BaseModel):
     increment: int = Field(..., ge=0, description="Number of completed sessions to add")
@@ -17,7 +17,7 @@ class StatisticsFilter(BaseModel):
 
 # Response schemas - Updated to match frontend expectations
 class StatisticsResponse(BaseModel):
-    focusTime: int = Field(..., alias="focus_time", description="Total focus time in seconds")
+    focusTime: int = Field(..., alias="focus_time", description="Total focus time in minutes")
     sessions: int = Field(..., description="Total number of completed sessions")
     tasksDone: int = Field(..., alias="tasks_done", description="Total number of completed tasks")
 

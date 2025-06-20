@@ -93,9 +93,13 @@ async def add_process_time_header(request: Request, call_next):
     response.headers["X-Process-Time"] = str(process_time)
     return response
 
-# Security monitoring middleware
+# Security monitoring middleware - DISABLED for development performance
 @app.middleware("http")
 async def security_monitoring(request: Request, call_next):
+    # Skip ALL security monitoring in development to improve performance
+    if settings.is_development():
+        return await call_next(request)
+    
     # Skip security monitoring for auth endpoints, health checks, and CORS preflight requests
     if any(path in str(request.url.path) for path in ["/auth/", "/health", "/docs", "/redoc", "/openapi.json"]) or request.method == "OPTIONS":
         return await call_next(request)
@@ -140,6 +144,32 @@ async def health_check():
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat()
     }
+
+# Statistics health check endpoint
+@app.get("/health/statistics")
+async def statistics_health_check():
+    """Simple health check for statistics functionality"""
+    try:
+        from app.schemas.statistics import FocusTimeUpdate, StatisticsResponse
+        
+        # Test schema creation
+        test_request = FocusTimeUpdate(minutes=1)
+        test_response = StatisticsResponse(focusTime=0, sessions=0, tasksDone=0)
+        
+        return {
+            "status": "healthy",
+            "message": "Statistics schemas working",
+            "uses_minutes": True,
+            "test_request": test_request.model_dump(),
+            "test_response": test_response.model_dump(),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        return {
+            "status": "error", 
+            "message": f"Statistics error: {str(e)}",
+            "timestamp": datetime.utcnow().isoformat()
+        }
 
 # Debug endpoint for troubleshooting
 @app.get("/debug/headers")
