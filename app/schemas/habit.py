@@ -29,9 +29,12 @@ class HabitCompletionCreate(HabitCompletionBase):
     date: date
 
 class HabitCompletionUpdate(BaseModel):
-    habit_id: int
+    habit_id: int = Field(alias="habitId")
     date: date
     completed: bool
+
+    class Config:
+        allow_population_by_field_name = True
 
 class HabitCompletionResponse(HabitCompletionBase):
     id: int
