@@ -51,9 +51,9 @@ class Settings(BaseSettings):
 
     # Rate Limiting - DISABLED for development
     RATE_LIMIT_ENABLED: bool = Field(False, env="RATE_LIMIT_ENABLED")  # Completely disabled
-    # RATE_LIMIT_MAX_REQUESTS: int = Field(15000, env="RATE_LIMIT_MAX_REQUESTS")  # Commented out
-    # RATE_LIMIT_PERIOD_SECONDS: int = Field(60, env="RATE_LIMIT_PERIOD_SECONDS")  # Commented out  
-    # RATE_LIMIT_BLOCK_DURATION: int = Field(300, env="RATE_LIMIT_BLOCK_DURATION")  # Commented out
+    RATE_LIMIT_MAX_REQUESTS: int = Field(1000, env="RATE_LIMIT_MAX_REQUESTS")  # Dummy value, not used when disabled
+    RATE_LIMIT_PERIOD_SECONDS: int = Field(60, env="RATE_LIMIT_PERIOD_SECONDS")  # Dummy value, not used when disabled
+    RATE_LIMIT_BLOCK_DURATION: int = Field(300, env="RATE_LIMIT_BLOCK_DURATION")  # Dummy value, not used when disabled
 
     # Rate‑limit headers
     API_RATE_LIMIT_REMAINING: str = Field("X-RateLimit-Remaining", env="API_RATE_LIMIT_REMAINING")
