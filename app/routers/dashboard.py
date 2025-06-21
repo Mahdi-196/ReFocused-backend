@@ -23,6 +23,22 @@ async def get_daily_entries(
     current_user: User = Depends(get_current_user)
 ):
     """Get daily entries (mood + habit completions) for a month"""
+    return await _get_daily_entries_impl(month, db, current_user)
+
+@router.get("/entries", response_model=List[DailyEntryResponse])
+async def get_entries_alias(
+    month: Optional[str] = Query(None, description="Filter by month (YYYY-MM format)"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Alias for daily entries endpoint - for frontend compatibility"""
+    return await _get_daily_entries_impl(month, db, current_user)
+
+async def _get_daily_entries_impl(
+    month: Optional[str],
+    db: AsyncSession,
+    current_user: User
+) -> List[DailyEntryResponse]:
     try:
         # Parse month parameter
         if month:
@@ -34,8 +50,9 @@ async def get_daily_entries(
             else:
                 end_date = date(year, month_num + 1, 1) - timedelta(days=1)
         else:
-            # Default to current month
-            today = date.today()
+            # Default to current month - use configurable date for testing
+            from app.core.config import settings
+            today = settings.get_current_date()
             start_date = date(today.year, today.month, 1)
             if today.month == 12:
                 end_date = date(today.year + 1, 1, 1) - timedelta(days=1)

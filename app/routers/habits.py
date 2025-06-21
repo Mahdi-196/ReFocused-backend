@@ -150,4 +150,45 @@ async def get_habit_completions(
     completions = await HabitCRUD.get_habit_completions(
         db, habit_id, current_user.id, start_date, end_date
     )
-    return {"dates": completions} 
+    return {"dates": completions}
+
+@router.get("/{habit_id}/debug")
+async def debug_habit_streak(
+    habit_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Debug endpoint to troubleshoot streak calculation"""
+    from app.core.config import settings
+    from sqlalchemy import select, desc
+    from app.db.models import HabitStreak
+    
+    # Get habit
+    habit = await HabitCRUD.get_habit(db, habit_id, current_user.id)
+    if not habit:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Habit not found"
+        )
+    
+    # Get all completions for this habit
+    result = await db.execute(
+        select(HabitStreak.date).where(HabitStreak.habit_id == habit_id).order_by(desc(HabitStreak.date))
+    )
+    completion_dates = result.scalars().all()
+    
+    # Current date info
+    current_date = settings.get_current_date()
+    
+    return {
+        "habit_id": habit_id,
+        "habit_name": habit.name,
+        "stored_streak": habit.streak,
+        "current_date": current_date,
+        "mock_date_enabled": settings.MOCK_DATE_ENABLED,
+        "mock_date": settings.MOCK_DATE,
+        "completion_dates": [str(d) for d in completion_dates],
+        "completion_count": len(completion_dates),
+        "last_completion": str(completion_dates[0]) if completion_dates else None,
+        "recalculated_streak": await HabitCRUD._calculate_streak(db, habit_id)
+    } 

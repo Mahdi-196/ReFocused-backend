@@ -5,6 +5,7 @@ from datetime import date, timedelta
 from fastapi import HTTPException, status
 from app.db.models import Habit, HabitStreak
 from app.schemas.habit import HabitCreate, HabitUpdate
+from app.core.config import settings
 
 FAVORITE_HABITS_LIMIT = 3
 
@@ -185,7 +186,7 @@ class HabitCRUD:
             return 0
 
         last_completion = completion_dates[0]
-        today = date.today()
+        today = settings.get_current_date()  # Use configurable date for testing
 
         if last_completion < today - timedelta(days=1):
             return 0

@@ -93,12 +93,24 @@ class Settings(BaseSettings):
     # Trusted Hosts
     TRUSTED_HOSTS: List[str] = Field(default_factory=list, env="TRUSTED_HOSTS")
 
+    # Mock date support for testing
+    MOCK_DATE_ENABLED: bool = Field(False, env="MOCK_DATE_ENABLED")
+    MOCK_DATE: str = Field("2025-06-23", env="MOCK_DATE")  # Format: YYYY-MM-DD
+
     # Helpers
     def is_development(self) -> bool:
         return self.APP_ENV.lower() == "development"
 
     def is_production(self) -> bool:
         return self.APP_ENV.lower() == "production"
+    
+    def get_current_date(self):
+        """Get current date - can be mocked for testing"""
+        if self.MOCK_DATE_ENABLED and self.is_development():
+            from datetime import datetime
+            return datetime.strptime(self.MOCK_DATE, "%Y-%m-%d").date()
+        from datetime import date
+        return date.today()
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
 

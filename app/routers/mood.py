@@ -13,8 +13,8 @@ router = APIRouter()
 
 @router.get("/", response_model=List[MoodResponse])
 async def get_mood_entries(
-    start_date: Optional[date] = Query(None, description="Start date for filtering (YYYY-MM-DD)"),
-    end_date: Optional[date] = Query(None, description="End date for filtering (YYYY-MM-DD)"),
+    start_date: Optional[date] = Query(None, alias="startDate", description="Start date for filtering (YYYY-MM-DD)"),
+    end_date: Optional[date] = Query(None, alias="endDate", description="End date for filtering (YYYY-MM-DD)"),
     month: Optional[str] = Query(None, description="Filter by month (YYYY-MM format) - legacy support"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
