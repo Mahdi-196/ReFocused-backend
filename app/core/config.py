@@ -49,11 +49,11 @@ class Settings(BaseSettings):
     CORS_ALLOWED_METHODS: List[str] = Field(default_factory=lambda: ["*"], env="CORS_ALLOWED_METHODS")
     CORS_ALLOWED_HEADERS: List[str] = Field(default_factory=lambda: ["*"], env="CORS_ALLOWED_HEADERS")
 
-    # Rate Limiting - High limits for development
-    RATE_LIMIT_ENABLED: bool = Field(True, env="RATE_LIMIT_ENABLED")  # Re-enabled with high limits
-    RATE_LIMIT_MAX_REQUESTS: int = Field(15000, env="RATE_LIMIT_MAX_REQUESTS")  # Increased to 15000
-    RATE_LIMIT_PERIOD_SECONDS: int = Field(60, env="RATE_LIMIT_PERIOD_SECONDS")
-    RATE_LIMIT_BLOCK_DURATION: int = Field(300, env="RATE_LIMIT_BLOCK_DURATION")
+    # Rate Limiting - DISABLED for development
+    RATE_LIMIT_ENABLED: bool = Field(False, env="RATE_LIMIT_ENABLED")  # Completely disabled
+    # RATE_LIMIT_MAX_REQUESTS: int = Field(15000, env="RATE_LIMIT_MAX_REQUESTS")  # Commented out
+    # RATE_LIMIT_PERIOD_SECONDS: int = Field(60, env="RATE_LIMIT_PERIOD_SECONDS")  # Commented out  
+    # RATE_LIMIT_BLOCK_DURATION: int = Field(300, env="RATE_LIMIT_BLOCK_DURATION")  # Commented out
 
     # Rate‑limit headers
     API_RATE_LIMIT_REMAINING: str = Field("X-RateLimit-Remaining", env="API_RATE_LIMIT_REMAINING")

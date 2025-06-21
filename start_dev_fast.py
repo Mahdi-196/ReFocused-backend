@@ -13,8 +13,8 @@ os.environ.setdefault("DEBUG", "true")
 os.environ.setdefault("SECRET_KEY", "dev-secret-key-32-characters-long-minimum")
 os.environ.setdefault("MOCK_DATE_ENABLED", "true")
 os.environ.setdefault("MOCK_DATE", "2025-06-23")
-os.environ.setdefault("RATE_LIMIT_ENABLED", "true")
-os.environ.setdefault("RATE_LIMIT_MAX_REQUESTS", "15000")
+os.environ.setdefault("RATE_LIMIT_ENABLED", "false")
+# os.environ.setdefault("RATE_LIMIT_MAX_REQUESTS", "15000")  # Commented out
 
 if __name__ == "__main__":
     print("🚀 Starting ReFocused Backend in FAST development mode")
@@ -22,7 +22,7 @@ if __name__ == "__main__":
     print("🔧 Security monitoring DISABLED for performance")
     print("🌐 CORS enabled for http://localhost:3000")
     print("📅 Mock date ENABLED: 2025-06-23 (for frontend testing)")
-    print("🚦 Rate limit: 15000 requests/minute (high for development)")
+    print("🚫 Rate limiting: DISABLED (unlimited requests for development)")
     print("⚡ Ready for frontend connection!")
     
     uvicorn.run(
