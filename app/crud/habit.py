@@ -110,8 +110,19 @@ class HabitCRUD:
         habit_data: HabitCreate, 
         user: User
     ) -> Habit:
-        """Create a new habit"""
+        """Create a new habit with comprehensive validation"""
         try:
+            # Validate and clean name
+            cleaned_name = habit_data.name.strip()
+            if not cleaned_name:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Habit name cannot be empty"
+                )
+            
+            # Check for duplicate name
+            await self._validate_habit_name_unique(db, user.id, cleaned_name)
+            
             # Check favorite limit if trying to create as favorite
             if habit_data.is_favorite:
                 await self._check_favorite_limit(db, user.id)
@@ -120,7 +131,7 @@ class HabitCRUD:
             now_utc = datetime.now(pytz.UTC)
             db_habit = Habit(
                 user_id=user.id,
-                name=habit_data.name,
+                name=cleaned_name,
                 is_favorite=habit_data.is_favorite or False,
                 is_active=habit_data.is_active if habit_data.is_active is not None else True,
                 streak=0,
@@ -134,12 +145,23 @@ class HabitCRUD:
             
             return db_habit
             
+        except HTTPException:
+            # Re-raise HTTP exceptions (our custom validation errors)
+            await db.rollback()
+            raise
         except Exception as e:
             await db.rollback()
-            if "unique constraint" in str(e).lower():
+            # Handle database constraint violations
+            error_str = str(e).lower()
+            if "unique constraint" in error_str or "uix_user_habit_name" in error_str:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="A habit with this name already exists"
+                )
+            elif "check constraint" in error_str or "chk_habit_name_not_empty" in error_str:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Habit name cannot be empty"
                 )
             logger.error(f"Error creating habit: {str(e)}")
             raise HTTPException(
@@ -154,7 +176,7 @@ class HabitCRUD:
         habit_data: HabitUpdate, 
         user: User
     ) -> Optional[Habit]:
-        """Update a habit"""
+        """Update a habit with comprehensive validation"""
         try:
             # Get existing habit
             result = await db.execute(
@@ -167,14 +189,29 @@ class HabitCRUD:
             if not db_habit:
                 return None
             
-            # Check favorite limit if trying to set as favorite
-            if habit_data.is_favorite and not db_habit.is_favorite:
-                await self._check_favorite_limit(db, user.id, exclude_habit_id=habit_id)
+            # Validate name if provided
+            if habit_data.name is not None:
+                cleaned_name = habit_data.name.strip()
+                if not cleaned_name:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Habit name cannot be empty"
+                    )
+                
+                # Check for duplicate name (excluding current habit)
+                await self._validate_habit_name_unique(db, user.id, cleaned_name, exclude_habit_id=habit_id)
+                db_habit.name = cleaned_name
             
-            # Update fields
-            update_data = habit_data.dict(exclude_unset=True)
-            for field, value in update_data.items():
-                setattr(db_habit, field, value)
+            # Check favorite limit if trying to set as favorite
+            if habit_data.is_favorite is not None:
+                if habit_data.is_favorite and not db_habit.is_favorite:
+                    # User wants to favorite - check limit
+                    await self._check_favorite_limit(db, user.id, exclude_habit_id=habit_id)
+                db_habit.is_favorite = habit_data.is_favorite
+            
+            # Update is_active if provided
+            if habit_data.is_active is not None:
+                db_habit.is_active = habit_data.is_active
             
             # Update last_updated_utc
             db_habit.last_updated_utc = datetime.now(pytz.UTC)
@@ -187,8 +224,24 @@ class HabitCRUD:
             
             return db_habit
             
+        except HTTPException:
+            # Re-raise HTTP exceptions (our custom validation errors)
+            await db.rollback()
+            raise
         except Exception as e:
             await db.rollback()
+            # Handle database constraint violations
+            error_str = str(e).lower()
+            if "unique constraint" in error_str or "uix_user_habit_name" in error_str:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="A habit with this name already exists"
+                )
+            elif "check constraint" in error_str or "chk_habit_name_not_empty" in error_str:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Habit name cannot be empty"
+                )
             logger.error(f"Error updating habit {habit_id}: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -583,7 +636,8 @@ class HabitCRUD:
         query = select(func.count(Habit.id)).where(
             and_(
                 Habit.user_id == user_id,
-                Habit.is_favorite == True
+                Habit.is_favorite == True,
+                Habit.is_active == True  # Only count active habits
             )
         )
         
@@ -596,7 +650,35 @@ class HabitCRUD:
         if favorite_count >= FAVORITE_HABITS_LIMIT:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"You can only have up to {FAVORITE_HABITS_LIMIT} favorite habits"
+                detail=f"Maximum {FAVORITE_HABITS_LIMIT} habits can be pinned. Unpin another habit first."
+            )
+    
+    async def _validate_habit_name_unique(
+        self,
+        db: AsyncSession,
+        user_id: int,
+        name: str,
+        exclude_habit_id: Optional[int] = None
+    ) -> None:
+        """Validate habit name is unique for user"""
+        query = select(Habit).where(
+            and_(
+                Habit.user_id == user_id,
+                Habit.name == name.strip(),
+                Habit.is_active == True  # Only check against active habits
+            )
+        )
+        
+        if exclude_habit_id:
+            query = query.where(Habit.id != exclude_habit_id)
+        
+        result = await db.execute(query)
+        existing_habit = result.scalar_one_or_none()
+        
+        if existing_habit:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A habit with this name already exists"
             )
     
     async def _calculate_longest_streak(

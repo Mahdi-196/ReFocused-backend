@@ -1,10 +1,18 @@
 from typing import Optional, List
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, validator
 from datetime import datetime, date
 
 class HabitBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     is_favorite: Optional[bool] = False
+    
+    @validator('name')
+    def validate_name(cls, v):
+        if not v or not v.strip():
+            raise ValueError('Habit name cannot be empty')
+        if len(v.strip()) > 255:
+            raise ValueError('Habit name too long (max 255 characters)')
+        return v.strip()
 
 class HabitCreate(HabitBase):
     is_active: Optional[bool] = True
@@ -13,6 +21,16 @@ class HabitUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     is_favorite: Optional[bool] = None
     is_active: Optional[bool] = None
+    
+    @validator('name')
+    def validate_name(cls, v):
+        if v is not None:
+            if not v or not v.strip():
+                raise ValueError('Habit name cannot be empty')
+            if len(v.strip()) > 255:
+                raise ValueError('Habit name too long (max 255 characters)')
+            return v.strip()
+        return v
 
 class HabitResponse(HabitBase):
     id: int

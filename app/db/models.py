@@ -1,6 +1,6 @@
 from sqlalchemy import (
     Column, Integer, String, Text, DateTime, Date, 
-    ForeignKey, Boolean, UniqueConstraint, Index, Float
+    ForeignKey, Boolean, UniqueConstraint, Index, Float, CheckConstraint
 )
 from sqlalchemy.orm import relationship, DeclarativeBase
 from sqlalchemy.sql import func
@@ -114,6 +114,7 @@ class Habit(Base):
     # Unique constraint for user + name
     __table_args__ = (
         UniqueConstraint('user_id', 'name', name='uix_user_habit_name'),
+        CheckConstraint("LENGTH(TRIM(name)) > 0", name='chk_habit_name_not_empty'),
         Index('idx_habits_user_active', 'user_id', 'is_active'),
         Index('idx_habits_user_favorite', 'user_id', 'is_favorite'),
     )
