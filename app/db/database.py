@@ -32,4 +32,8 @@ async def get_db():
         try:
             yield session
         finally:
-            await session.close() 
+            await session.close()
+
+def get_db_session():
+    """Context manager for database sessions (for background tasks)"""
+    return async_session() 

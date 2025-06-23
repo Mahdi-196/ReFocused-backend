@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     DATABASE_MAX_OVERFLOW: int = Field(10, env="DATABASE_MAX_OVERFLOW")
     DATABASE_POOL_TIMEOUT: int = Field(30, env="DATABASE_POOL_TIMEOUT")
     DATABASE_POOL_RECYCLE: int = Field(1800, env="DATABASE_POOL_RECYCLE")
+    
+    # Celery Configuration
+    CELERY_BROKER_URL: str = Field("redis://localhost:6379/0", env="CELERY_BROKER_URL")
+    CELERY_RESULT_BACKEND: str = Field("redis://localhost:6379/0", env="CELERY_RESULT_BACKEND")
 
     # CORS
     CORS_ALLOWED_ORIGINS: List[str] = Field(
@@ -93,7 +97,7 @@ class Settings(BaseSettings):
     TRUSTED_HOSTS: List[str] = Field(default_factory=list, env="TRUSTED_HOSTS")
 
     # Mock date support for testing
-    MOCK_DATE_ENABLED: bool = Field(False, env="MOCK_DATE_ENABLED")
+    MOCK_DATE_ENABLED: bool = Field(True, env="MOCK_DATE_ENABLED")  # Enable for development
     MOCK_DATE: str = Field("2025-06-23", env="MOCK_DATE")  # Format: YYYY-MM-DD
 
     # Helpers
@@ -103,13 +107,30 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.APP_ENV.lower() == "production"
     
-    def get_current_date(self):
-        """Get current date - can be mocked for testing"""
+    def get_current_date(self, user=None):
+        """
+        Get current date - can be mocked for testing.
+        
+        DEPRECATED: Use time_service.get_user_current_date(user) for user-specific dates.
+        This method is kept for backward compatibility but should be replaced.
+        """
+        # Check for runtime mock date override (for testing)
+        if hasattr(self, '_runtime_mock_date') and self._runtime_mock_date:
+            return self._runtime_mock_date
+            
         if self.MOCK_DATE_ENABLED and self.is_development():
             from datetime import datetime
             return datetime.strptime(self.MOCK_DATE, "%Y-%m-%d").date()
         from datetime import date
         return date.today()
+    
+    def set_mock_date(self, mock_date):
+        """Set runtime mock date for testing"""
+        self._runtime_mock_date = mock_date
+    
+    def clear_mock_date(self):
+        """Clear runtime mock date"""
+        self._runtime_mock_date = None
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
 

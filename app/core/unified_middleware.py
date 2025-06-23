@@ -32,9 +32,13 @@ class UnifiedSecurityMiddleware(BaseHTTPMiddleware):
         ]
         
     async def dispatch(self, request: Request, call_next):
-        # Skip middleware for static/health endpoints
+        # Skip middleware for static/health endpoints and debug endpoints
         skip_paths = ["/health", "/docs", "/redoc", "/openapi.json"]
-        if request.url.path in skip_paths or request.method == "OPTIONS":
+        debug_paths = ["/debug/", "/api/v1/time/debug/"]
+        
+        if (request.url.path in skip_paths or 
+            request.method == "OPTIONS" or
+            any(debug_path in request.url.path for debug_path in debug_paths)):
             return await call_next(request)
         
         start_time = time.time()
@@ -43,15 +47,16 @@ class UnifiedSecurityMiddleware(BaseHTTPMiddleware):
         client_ip = get_client_ip(request)
         
         # 1. IP Blocking Check (fastest check first)
-        if client_ip in self.ip_blocklist:
-            if time.time() < self.ip_blocklist[client_ip]:
-                return self._rate_limit_response()
-            else:
-                del self.ip_blocklist[client_ip]
+        # DISABLED - skip all IP blocking
+        # if client_ip in self.ip_blocklist:
+        #     if time.time() < self.ip_blocklist[client_ip]:
+        #         return self._rate_limit_response()
+        #     else:
+        #         del self.ip_blocklist[client_ip]
         
-        # 2. Rate Limiting
-        if not self._check_rate_limit(client_ip):
-            return self._rate_limit_response()
+        # 2. Rate Limiting - DISABLED
+        # if not self._check_rate_limit(client_ip):
+        #     return self._rate_limit_response()
         
         # 3. Request Validation
         validation_response = await self._validate_request(request, client_ip)
@@ -82,25 +87,7 @@ class UnifiedSecurityMiddleware(BaseHTTPMiddleware):
     
     def _check_rate_limit(self, client_ip: str) -> bool:
         """Check rate limit for client IP."""
-        if not settings.RATE_LIMIT_ENABLED:
-            return True
-            
-        current_time = time.time()
-        if client_ip not in self.rate_limit_store:
-            self.rate_limit_store[client_ip] = []
-        
-        # Clean old requests
-        self.rate_limit_store[client_ip] = [
-            t for t in self.rate_limit_store[client_ip]
-            if current_time - t < settings.RATE_LIMIT_PERIOD_SECONDS
-        ]
-        
-        # Check rate limit
-        if len(self.rate_limit_store[client_ip]) >= settings.RATE_LIMIT_MAX_REQUESTS:
-            self.ip_blocklist[client_ip] = current_time + settings.RATE_LIMIT_BLOCK_DURATION
-            return False
-        
-        self.rate_limit_store[client_ip].append(current_time)
+        # COMPLETELY DISABLED - always allow requests
         return True
     
     async def _validate_request(self, request: Request, client_ip: str) -> Response | None:

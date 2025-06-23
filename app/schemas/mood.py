@@ -23,11 +23,14 @@ class MoodResponse(BaseModel):
     happiness: int
     satisfaction: int
     stress: int
-    created_at: datetime
-    updated_at: Optional[datetime] = None
+    dayRating: Optional[int] = Field(None, ge=1, le=10, description="Overall day rating from 1-10", alias="day_rating")
+    notes: Optional[str] = Field(None, max_length=1000, description="Optional note", alias="note")
+    createdAt: datetime = Field(alias="created_at")
+    updatedAt: Optional[datetime] = Field(None, alias="updated_at")
     
     class Config:
         from_attributes = True
+        populate_by_name = True
 
 # Full mood schema for internal use (includes day_rating and note)
 class MoodFull(MoodBase):

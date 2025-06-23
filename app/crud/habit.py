@@ -1,204 +1,640 @@
-from typing import List, Optional
-from sqlalchemy import select, func, and_, desc
+from typing import List, Optional, Tuple
+from sqlalchemy import select, func, and_, desc, asc
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from fastapi import HTTPException, status
-from app.db.models import Habit, HabitStreak
-from app.schemas.habit import HabitCreate, HabitUpdate
-from app.core.config import settings
+import pytz
+import logging
+
+from app.db.models import Habit, HabitCompletion, User
+from app.schemas.habit import HabitCreate, HabitUpdate, HabitStatsResponse
+from app.services.time_service import TimeService
+
+logger = logging.getLogger(__name__)
 
 FAVORITE_HABITS_LIMIT = 3
 
 class HabitCRUD:
-    @staticmethod
-    async def get_habits(db: AsyncSession, user_id: int) -> List[Habit]:
-        """Get all habits for a user with their stored streaks"""
-        result = await db.execute(
-            select(Habit).where(Habit.user_id == user_id).order_by(Habit.is_favorite.desc(), Habit.name)
-        )
-        return result.scalars().all()
+    """
+    Production-ready timezone-aware habit tracking with on-demand reset logic.
     
-    @staticmethod
-    async def get_habit(db: AsyncSession, habit_id: int, user_id: int) -> Optional[Habit]:
-        """Get a specific habit by ID and user, with its stored streak"""
-        result = await db.execute(
-            select(Habit).where(
-                and_(Habit.id == habit_id, Habit.user_id == user_id)
+    Core principles:
+    1. All database operations in UTC
+    2. On-demand reset check on every read operation
+    3. User's local date for all habit logic
+    4. Atomic transactions for consistency
+    """
+    
+    def __init__(self):
+        self.time_service = TimeService()
+    
+    async def get_habits_with_reset_check(
+        self, 
+        db: AsyncSession, 
+        user: User,
+        include_inactive: bool = False
+    ) -> List[Habit]:
+        """
+        Get all habits with automatic on-demand reset check.
+        This is the core method implementing the on-demand reset strategy.
+        """
+        try:
+            # Build query with user's preferences
+            query = select(Habit).where(Habit.user_id == user.id)
+            
+            if not include_inactive:
+                query = query.where(Habit.is_active == True)
+            
+            # Order by favorite first, then by name
+            query = query.order_by(Habit.is_favorite.desc(), Habit.name)
+            
+            result = await db.execute(query)
+            habits = list(result.scalars().all())
+            
+            # Get current date in user's timezone
+            current_user_date = self.time_service.get_user_current_date(user)
+            
+            # Process each habit with reset check
+            for habit in habits:
+                await self._perform_reset_check(db, habit, user, current_user_date)
+                # Set last completed date for frontend
+                habit.last_completed_date = await self._get_last_completed_date(db, habit.id)
+            
+            await db.commit()
+            return habits
+            
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"Error in get_habits_with_reset_check for user {user.id}: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve habits"
             )
-        )
-        return result.scalar_one_or_none()
     
-    @staticmethod
-    async def create_habit(db: AsyncSession, habit: HabitCreate, user_id: int) -> Habit:
-        """Create a new habit for a user"""
-        db_habit = Habit(
-            user_id=user_id,
-            name=habit.name,
-            is_favorite=habit.is_favorite or False
-        )
-        db.add(db_habit)
-        await db.commit()
-        await db.refresh(db_habit)
-        
-        # Set initial streak to 0
-        db_habit.streak = 0
-        return db_habit
+    async def get_habit_with_reset_check(
+        self, 
+        db: AsyncSession, 
+        habit_id: int, 
+        user: User
+    ) -> Optional[Habit]:
+        """Get a specific habit with reset check"""
+        try:
+            result = await db.execute(
+                select(Habit).where(
+                    and_(Habit.id == habit_id, Habit.user_id == user.id)
+                )
+            )
+            habit = result.scalar_one_or_none()
+            
+            if not habit:
+                return None
+            
+            # Perform reset check
+            current_user_date = self.time_service.get_user_current_date(user)
+            await self._perform_reset_check(db, habit, user, current_user_date)
+            
+            # Set last completed date
+            habit.last_completed_date = await self._get_last_completed_date(db, habit.id)
+            
+            await db.commit()
+            return habit
+            
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"Error in get_habit_with_reset_check: {str(e)}")
+            raise
     
-    @staticmethod
-    async def update_habit(db: AsyncSession, habit_id: int, habit: HabitUpdate, user_id: int) -> Optional[Habit]:
+    async def create_habit(
+        self, 
+        db: AsyncSession, 
+        habit_data: HabitCreate, 
+        user: User
+    ) -> Habit:
+        """Create a new habit"""
+        try:
+            # Check favorite limit if trying to create as favorite
+            if habit_data.is_favorite:
+                await self._check_favorite_limit(db, user.id)
+            
+            # Create new habit with explicit timestamps
+            now_utc = datetime.now(pytz.UTC)
+            db_habit = Habit(
+                user_id=user.id,
+                name=habit_data.name,
+                is_favorite=habit_data.is_favorite or False,
+                is_active=habit_data.is_active if habit_data.is_active is not None else True,
+                streak=0,
+                created_at=now_utc,
+                last_updated_utc=now_utc
+            )
+            
+            db.add(db_habit)
+            await db.commit()
+            await db.refresh(db_habit)
+            
+            return db_habit
+            
+        except Exception as e:
+            await db.rollback()
+            if "unique constraint" in str(e).lower():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="A habit with this name already exists"
+                )
+            logger.error(f"Error creating habit: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to create habit"
+            )
+    
+    async def update_habit(
+        self, 
+        db: AsyncSession, 
+        habit_id: int, 
+        habit_data: HabitUpdate, 
+        user: User
+    ) -> Optional[Habit]:
         """Update a habit"""
-        # If trying to favorite, check the limit
-        if habit.is_favorite:
-            fovorites_count_result = await db.execute(
-                select(func.count(Habit.id)).where(
+        try:
+            # Get existing habit
+            result = await db.execute(
+                select(Habit).where(
+                    and_(Habit.id == habit_id, Habit.user_id == user.id)
+                )
+            )
+            db_habit = result.scalar_one_or_none()
+            
+            if not db_habit:
+                return None
+            
+            # Check favorite limit if trying to set as favorite
+            if habit_data.is_favorite and not db_habit.is_favorite:
+                await self._check_favorite_limit(db, user.id, exclude_habit_id=habit_id)
+            
+            # Update fields
+            update_data = habit_data.dict(exclude_unset=True)
+            for field, value in update_data.items():
+                setattr(db_habit, field, value)
+            
+            # Update last_updated_utc
+            db_habit.last_updated_utc = datetime.now(pytz.UTC)
+            
+            await db.commit()
+            await db.refresh(db_habit)
+            
+            # Set last completed date
+            db_habit.last_completed_date = await self._get_last_completed_date(db, habit_id)
+            
+            return db_habit
+            
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"Error updating habit {habit_id}: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to update habit"
+            )
+    
+    async def delete_habit(
+        self, 
+        db: AsyncSession, 
+        habit_id: int, 
+        user: User
+    ) -> bool:
+        """Delete a habit and all its completions"""
+        try:
+            result = await db.execute(
+                select(Habit).where(
+                    and_(Habit.id == habit_id, Habit.user_id == user.id)
+                )
+            )
+            db_habit = result.scalar_one_or_none()
+            
+            if not db_habit:
+                return False
+            
+            await db.delete(db_habit)
+            await db.commit()
+            return True
+            
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"Error deleting habit {habit_id}: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to delete habit"
+            )
+    
+    async def mark_habit_completion(
+        self, 
+        db: AsyncSession, 
+        habit_id: int, 
+        completion_date: date, 
+        completed: bool, 
+        user: User
+    ) -> bool:
+        """
+        Mark habit completion for a specific date with timezone awareness.
+        Implements atomic completion tracking with streak recalculation.
+        """
+        try:
+            # Verify habit belongs to user
+            habit_result = await db.execute(
+                select(Habit).where(
+                    and_(Habit.id == habit_id, Habit.user_id == user.id)
+                )
+            )
+            habit = habit_result.scalar_one_or_none()
+            if not habit:
+                return False
+            
+            # Check for existing completion
+            completion_result = await db.execute(
+                select(HabitCompletion).where(
                     and_(
-                        Habit.user_id == user_id,
-                        Habit.is_favorite == True,
-                        Habit.id != habit_id
+                        HabitCompletion.habit_id == habit_id,
+                        HabitCompletion.date == completion_date
                     )
                 )
             )
+            existing_completion = completion_result.scalar_one_or_none()
             
-            if fovorites_count_result.scalar() >= FAVORITE_HABITS_LIMIT:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"You can only have up to {FAVORITE_HABITS_LIMIT} favorite habits."
+            if completed and not existing_completion:
+                # Create new completion
+                new_completion = HabitCompletion(
+                    habit_id=habit_id,
+                    user_id=user.id,
+                    date=completion_date,
+                    completed=True,
+                    timezone=user.timezone
                 )
-
-        result = await db.execute(
+                db.add(new_completion)
+                
+            elif not completed and existing_completion:
+                # Remove existing completion
+                await db.delete(existing_completion)
+                
+            elif existing_completion and existing_completion.completed != completed:
+                # Update existing completion
+                existing_completion.completed = completed
+                existing_completion.completed_at = datetime.now(pytz.UTC)
+            
+            # Recalculate streak
+            await self._recalculate_habit_streak(db, habit_id, user)
+            
+            # Update habit's last_updated_utc
+            habit.last_updated_utc = datetime.now(pytz.UTC)
+            
+            await db.commit()
+            return True
+            
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"Error marking habit completion: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to update habit completion"
+            )
+    
+    async def get_habit_completions(
+        self, 
+        db: AsyncSession, 
+        habit_id: int, 
+        start_date: date, 
+        end_date: date, 
+        user: User
+    ) -> List[HabitCompletion]:
+        """Get completions for a specific habit within date range"""
+        # Verify habit ownership
+        habit_result = await db.execute(
             select(Habit).where(
-                and_(Habit.id == habit_id, Habit.user_id == user_id)
+                and_(Habit.id == habit_id, Habit.user_id == user.id)
             )
         )
-        db_habit = result.scalar_one_or_none()
-        
-        if not db_habit:
-            return None
-        
-        update_data = habit.dict(exclude_unset=True)
-        for field, value in update_data.items():
-            setattr(db_habit, field, value)
-        
-        await db.commit()
-        await db.refresh(db_habit)
-        
-        # Calculate current streak
-        db_habit.streak = await HabitCRUD._calculate_streak(db, db_habit.id)
-        return db_habit
-    
-    @staticmethod
-    async def update_completion(db: AsyncSession, habit_id: int, user_id: int, completion_date: date, completed: bool) -> bool:
-        """Mark a habit as complete or incomplete for a date and update streak."""
-        # Verify habit belongs to user
-        habit_result = await db.execute(select(Habit).where(and_(Habit.id == habit_id, Habit.user_id == user_id)))
         habit = habit_result.scalar_one_or_none()
         if not habit:
-            return False
-
-        # Find existing completion record
-        completion_result = await db.execute(select(HabitStreak).where(and_(HabitStreak.habit_id == habit_id, HabitStreak.date == completion_date)))
-        existing_completion = completion_result.scalar_one_or_none()
-
-        change_made = False
-        if completed and not existing_completion:
-            # Add completion
-            new_completion = HabitStreak(habit_id=habit_id, date=completion_date)
-            db.add(new_completion)
-            change_made = True
-        elif not completed and existing_completion:
-            # Remove completion
-            await db.delete(existing_completion)
-            change_made = True
-
-        if change_made:
-            await db.flush()
-
-        # Recalculate and update the streak for the habit
-        new_streak = await HabitCRUD._calculate_streak(db, habit_id)
-        if habit.streak != new_streak:
-            habit.streak = new_streak
-        
-        await db.commit()
-        return True
-
-    @staticmethod
-    async def delete_habit(db: AsyncSession, habit_id: int, user_id: int) -> bool:
-        """Delete a habit"""
-        result = await db.execute(
-            select(Habit).where(
-                and_(Habit.id == habit_id, Habit.user_id == user_id)
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Habit not found"
             )
-        )
-        db_habit = result.scalar_one_or_none()
         
-        if not db_habit:
-            return False
-        
-        await db.delete(db_habit)
-        await db.commit()
-        return True
-    
-    @staticmethod
-    async def mark_habit_complete(db: AsyncSession, habit_id: int, user_id: int, completion_date: date) -> bool:
-        """Mark a habit as complete for a specific date"""
-        return await HabitCRUD.update_completion(db, habit_id, user_id, completion_date, completed=True)
-    
-    @staticmethod
-    async def unmark_habit_complete(db: AsyncSession, habit_id: int, user_id: int, completion_date: date) -> bool:
-        """Unmark a habit completion for a specific date"""
-        return await HabitCRUD.update_completion(db, habit_id, user_id, completion_date, completed=False)
-    
-    @staticmethod
-    async def get_habit_completions(db: AsyncSession, habit_id: int, user_id: int, start_date: date, end_date: date) -> List[date]:
-        """Get habit completion dates for a date range"""
-        # Verify habit belongs to user
+        # Get completions
         result = await db.execute(
-            select(Habit).where(
-                and_(Habit.id == habit_id, Habit.user_id == user_id)
-            )
-        )
-        habit = result.scalar_one_or_none()
-        
-        if not habit:
-            return []
-        
-        result = await db.execute(
-            select(HabitStreak.date).where(
+            select(HabitCompletion).where(
                 and_(
-                    HabitStreak.habit_id == habit_id,
-                    HabitStreak.date >= start_date,
-                    HabitStreak.date <= end_date
+                    HabitCompletion.habit_id == habit_id,
+                    HabitCompletion.date >= start_date,
+                    HabitCompletion.date <= end_date,
+                    HabitCompletion.completed == True
                 )
-            ).order_by(HabitStreak.date)
+            ).order_by(HabitCompletion.date.desc())
         )
-        
         return result.scalars().all()
     
-    @staticmethod
-    async def _calculate_streak(db: AsyncSession, habit_id: int) -> int:
-        """Calculate current streak for a habit."""
-        result = await db.execute(
-            select(HabitStreak.date).where(HabitStreak.habit_id == habit_id).order_by(desc(HabitStreak.date))
+    async def get_completions_for_range(
+        self, 
+        db: AsyncSession, 
+        user: User, 
+        start_date: date, 
+        end_date: date
+    ) -> List[HabitCompletion]:
+        """Get all habit completions for all user's habits within date range"""
+        # Get all user's habits
+        habits_result = await db.execute(
+            select(Habit.id).where(Habit.user_id == user.id)
         )
-        completion_dates = result.scalars().all()
-
-        if not completion_dates:
-            return 0
-
-        last_completion = completion_dates[0]
-        today = settings.get_current_date()  # Use configurable date for testing
-
-        if last_completion < today - timedelta(days=1):
-            return 0
-
-        streak = 0
-        expected_date = today if last_completion == today else today - timedelta(days=1)
-
-        for completion_date in completion_dates:
-            if completion_date == expected_date:
-                streak += 1
-                expected_date -= timedelta(days=1)
-            elif completion_date < expected_date:
-                break
+        habit_ids = [row[0] for row in habits_result.fetchall()]
         
-        return streak 
+        if not habit_ids:
+            return []
+        
+        # Get all completions for the user's habits in the date range
+        result = await db.execute(
+            select(HabitCompletion).where(
+                and_(
+                    HabitCompletion.habit_id.in_(habit_ids),
+                    HabitCompletion.date >= start_date,
+                    HabitCompletion.date <= end_date,
+                    HabitCompletion.completed == True
+                )
+            ).order_by(HabitCompletion.date.desc(), HabitCompletion.habit_id)
+        )
+        return result.scalars().all()
+    
+    async def get_habit_stats(
+        self, 
+        db: AsyncSession, 
+        habit_id: int, 
+        user: User
+    ) -> HabitStatsResponse:
+        """Get comprehensive habit statistics"""
+        try:
+            # Verify habit exists and get current streak
+            habit = await self.get_habit_with_reset_check(db, habit_id, user)
+            if not habit:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Habit not found"
+                )
+            
+            # Get completion statistics
+            current_date = self.time_service.get_user_current_date(user)
+            seven_days_ago = current_date - timedelta(days=7)
+            thirty_days_ago = current_date - timedelta(days=30)
+            
+            # Total completions
+            total_result = await db.execute(
+                select(func.count(HabitCompletion.id)).where(
+                    and_(
+                        HabitCompletion.habit_id == habit_id,
+                        HabitCompletion.completed == True
+                    )
+                )
+            )
+            total_completions = total_result.scalar() or 0
+            
+            # 7-day completion rate
+            seven_day_result = await db.execute(
+                select(func.count(HabitCompletion.id)).where(
+                    and_(
+                        HabitCompletion.habit_id == habit_id,
+                        HabitCompletion.date >= seven_days_ago,
+                        HabitCompletion.date <= current_date,
+                        HabitCompletion.completed == True
+                    )
+                )
+            )
+            seven_day_completions = seven_day_result.scalar() or 0
+            completion_rate_7days = (seven_day_completions / 7) * 100
+            
+            # 30-day completion rate
+            thirty_day_result = await db.execute(
+                select(func.count(HabitCompletion.id)).where(
+                    and_(
+                        HabitCompletion.habit_id == habit_id,
+                        HabitCompletion.date >= thirty_days_ago,
+                        HabitCompletion.date <= current_date,
+                        HabitCompletion.completed == True
+                    )
+                )
+            )
+            thirty_day_completions = thirty_day_result.scalar() or 0
+            completion_rate_30days = (thirty_day_completions / 30) * 100
+            
+            # Last completed date
+            last_completed_result = await db.execute(
+                select(HabitCompletion.date).where(
+                    and_(
+                        HabitCompletion.habit_id == habit_id,
+                        HabitCompletion.completed == True
+                    )
+                ).order_by(HabitCompletion.date.desc()).limit(1)
+            )
+            last_completed = last_completed_result.scalar_one_or_none()
+            
+            # Calculate longest streak (this is expensive but accurate)
+            longest_streak = await self._calculate_longest_streak(db, habit_id)
+            
+            return HabitStatsResponse(
+                habit_id=habit_id,
+                total_completions=total_completions,
+                current_streak=habit.streak,
+                longest_streak=longest_streak,
+                completion_rate_7days=round(completion_rate_7days, 1),
+                completion_rate_30days=round(completion_rate_30days, 1),
+                last_completed=last_completed
+            )
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error getting habit stats: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve habit statistics"
+            )
+    
+    # Private helper methods
+    async def _perform_reset_check(
+        self, 
+        db: AsyncSession, 
+        habit: Habit, 
+        user: User, 
+        current_user_date: date
+    ) -> None:
+        """
+        Perform on-demand reset check for a habit.
+        This is the core implementation of the on-demand reset strategy.
+        """
+        if not habit.last_updated_utc:
+            return
+        
+        # Convert last update time to user's timezone and get date
+        last_updated_user_tz = self.time_service.convert_to_user_timezone(
+            habit.last_updated_utc, user
+        )
+        last_updated_date = last_updated_user_tz.date()
+        
+        # Check if day has changed in user's timezone
+        if last_updated_date < current_user_date:
+            await self._handle_day_change(db, habit, user, last_updated_date, current_user_date)
+            habit.last_updated_utc = datetime.now(pytz.UTC)
+    
+    async def _handle_day_change(
+        self, 
+        db: AsyncSession, 
+        habit: Habit, 
+        user: User,
+        old_date: date, 
+        new_date: date
+    ) -> None:
+        """Handle when a habit crosses into a new day"""
+        days_missed = (new_date - old_date).days
+        
+        if days_missed == 1:
+            # Normal day progression - check if yesterday was completed
+            yesterday_completed = await self._check_date_completed(db, habit.id, old_date)
+            if not yesterday_completed:
+                habit.streak = 0
+        else:
+            # Multiple days missed - reset streak
+            habit.streak = 0
+    
+    async def _recalculate_habit_streak(
+        self, 
+        db: AsyncSession, 
+        habit_id: int, 
+        user: User
+    ) -> int:
+        """Recalculate habit streak from completions"""
+        try:
+            current_date = self.time_service.get_user_current_date(user)
+            streak = 0
+            check_date = current_date
+            
+            # Count backwards from today until we find a gap
+            while True:
+                completed = await self._check_date_completed(db, habit_id, check_date)
+                if not completed:
+                    break
+                streak += 1
+                check_date -= timedelta(days=1)
+                
+                # Safety limit to prevent infinite loops
+                if streak > 1000:
+                    break
+            
+            # Update habit streak
+            habit_result = await db.execute(
+                select(Habit).where(Habit.id == habit_id)
+            )
+            habit = habit_result.scalar_one_or_none()
+            if habit:
+                habit.streak = streak
+            
+            return streak
+            
+        except Exception as e:
+            logger.error(f"Error recalculating streak for habit {habit_id}: {str(e)}")
+            raise
+    
+    async def _check_date_completed(
+        self, 
+        db: AsyncSession, 
+        habit_id: int, 
+        check_date: date
+    ) -> bool:
+        """Check if a habit was completed on a specific date"""
+        result = await db.execute(
+            select(HabitCompletion).where(
+                and_(
+                    HabitCompletion.habit_id == habit_id,
+                    HabitCompletion.date == check_date,
+                    HabitCompletion.completed == True
+                )
+            )
+        )
+        return result.scalar_one_or_none() is not None
+    
+    async def _get_last_completed_date(
+        self, 
+        db: AsyncSession, 
+        habit_id: int
+    ) -> Optional[str]:
+        """Get the last completed date as string (YYYY-MM-DD)"""
+        result = await db.execute(
+            select(HabitCompletion.date).where(
+                and_(
+                    HabitCompletion.habit_id == habit_id,
+                    HabitCompletion.completed == True
+                )
+            ).order_by(HabitCompletion.date.desc()).limit(1)
+        )
+        last_date = result.scalar_one_or_none()
+        return last_date.strftime("%Y-%m-%d") if last_date else None
+    
+    async def _check_favorite_limit(
+        self, 
+        db: AsyncSession, 
+        user_id: int, 
+        exclude_habit_id: Optional[int] = None
+    ) -> None:
+        """Check if user has reached favorite habits limit"""
+        query = select(func.count(Habit.id)).where(
+            and_(
+                Habit.user_id == user_id,
+                Habit.is_favorite == True
+            )
+        )
+        
+        if exclude_habit_id:
+            query = query.where(Habit.id != exclude_habit_id)
+        
+        result = await db.execute(query)
+        favorite_count = result.scalar()
+        
+        if favorite_count >= FAVORITE_HABITS_LIMIT:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"You can only have up to {FAVORITE_HABITS_LIMIT} favorite habits"
+            )
+    
+    async def _calculate_longest_streak(
+        self, 
+        db: AsyncSession, 
+        habit_id: int
+    ) -> int:
+        """Calculate the longest streak for a habit (expensive operation)"""
+        try:
+            # Get all completions ordered by date
+            result = await db.execute(
+                select(HabitCompletion.date).where(
+                    and_(
+                        HabitCompletion.habit_id == habit_id,
+                        HabitCompletion.completed == True
+                    )
+                ).order_by(HabitCompletion.date.asc())
+            )
+            completion_dates = [row[0] for row in result.fetchall()]
+            
+            if not completion_dates:
+                return 0
+            
+            max_streak = 1
+            current_streak = 1
+            
+            for i in range(1, len(completion_dates)):
+                if completion_dates[i] == completion_dates[i-1] + timedelta(days=1):
+                    current_streak += 1
+                    max_streak = max(max_streak, current_streak)
+                else:
+                    current_streak = 1
+            
+            return max_streak
+            
+        except Exception as e:
+            logger.error(f"Error calculating longest streak: {str(e)}")
+            return 0
+
+# Global instance
+habit_crud = HabitCRUD() 

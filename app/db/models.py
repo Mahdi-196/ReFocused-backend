@@ -32,6 +32,12 @@ class User(Base):
     auth_provider = Column(String, default="local", nullable=False)  # 'local', 'google'
     profile_picture = Column(String, nullable=True)
     
+    # Timezone support for global users
+    timezone = Column(String, default="UTC", nullable=False)  # IANA timezone identifier like "America/New_York"
+    timezone_detected_method = Column(String, default="auto", nullable=False)  # 'auto', 'manual', 'ip_geo'
+    timezone_confidence = Column(Float, default=0.5, nullable=False)  # 0.0-1.0 confidence score
+    timezone_updated_at = Column(DateTime(timezone=True), server_default=func.now())
+    
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_login = Column(DateTime(timezone=True))
     failed_login_attempts = Column(Integer, default=0)
@@ -93,19 +99,50 @@ class Habit(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     name = Column(String, nullable=False)
     is_favorite = Column(Boolean, default=False, nullable=False)
-    created_at = Column(DateTime, default=func.now(), nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    last_updated_utc = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     streak = Column(Integer, default=0, nullable=False)
     
     # Relationships
     user = relationship("User", back_populates="habits")
+    completions = relationship("HabitCompletion", back_populates="habit", cascade="all, delete-orphan")
+    
+    # Legacy relationship for backward compatibility (deprecated)
     streaks = relationship("HabitStreak", back_populates="habit", cascade="all, delete-orphan")
     
     # Unique constraint for user + name
     __table_args__ = (
         UniqueConstraint('user_id', 'name', name='uix_user_habit_name'),
+        Index('idx_habits_user_active', 'user_id', 'is_active'),
+        Index('idx_habits_user_favorite', 'user_id', 'is_favorite'),
     )
 
-# HabitStreak model
+# New timezone-aware habit completion model
+class HabitCompletion(Base):
+    __tablename__ = "habit_completions"
+    
+    id = Column(Integer, primary_key=True)
+    habit_id = Column(Integer, ForeignKey("habits.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    date = Column(Date, nullable=False, index=True)  # User's local date
+    completed = Column(Boolean, default=True, nullable=False)
+    completed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    timezone = Column(String(50), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    
+    # Relationships
+    habit = relationship("Habit", back_populates="completions")
+    user = relationship("User")
+    
+    # Constraints
+    __table_args__ = (
+        UniqueConstraint('habit_id', 'date', name='uix_habit_completion_date'),
+        Index('idx_habit_completions_user_date', 'user_id', 'date'),
+        Index('idx_habit_completions_habit', 'habit_id'),
+    )
+
+# Legacy HabitStreak model (deprecated but kept for backward compatibility)
 class HabitStreak(Base):
     __tablename__ = "habit_streaks"
     

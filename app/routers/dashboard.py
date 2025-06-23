@@ -6,12 +6,12 @@ from sqlalchemy import select, and_, extract
 
 from app.db.database import get_db
 from app.core.auth import get_current_user
-from app.db.models import Habit, HabitStreak, MoodEntry
+from app.db.models import Habit, HabitCompletion, MoodEntry
 from app.schemas.dashboard import DailyEntryResponse, DailyEntryCreate
 from app.schemas.habit import HabitCompletionResponse
 from app.schemas.mood import MoodResponse
 from app.db.models import User
-from app.crud.habit import HabitCRUD
+from app.crud.habit import habit_crud
 from app.crud.mood import MoodCRUD
 
 router = APIRouter()
@@ -25,14 +25,111 @@ async def get_daily_entries(
     """Get daily entries (mood + habit completions) for a month"""
     return await _get_daily_entries_impl(month, db, current_user)
 
-@router.get("/entries", response_model=List[DailyEntryResponse])
+@router.get("/entries")
 async def get_entries_alias(
     month: Optional[str] = Query(None, description="Filter by month (YYYY-MM format)"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Alias for daily entries endpoint - for frontend compatibility"""
-    return await _get_daily_entries_impl(month, db, current_user)
+    """Get dashboard entries in the format expected by frontend - object with date keys"""
+    try:
+        # Parse month parameter
+        if month:
+            try:
+                year, month_num = map(int, month.split('-'))
+                # Get first and last day of the month
+                start_date = date(year, month_num, 1)
+                if month_num == 12:
+                    end_date = date(year + 1, 1, 1) - timedelta(days=1)
+                else:
+                    end_date = date(year, month_num + 1, 1) - timedelta(days=1)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid month format. Use YYYY-MM"
+                )
+        else:
+            # Default to current month
+            from app.core.config import settings
+            today = settings.get_current_date()
+            start_date = date(today.year, today.month, 1)
+            if today.month == 12:
+                end_date = date(today.year + 1, 1, 1) - timedelta(days=1)
+            else:
+                end_date = date(today.year, today.month + 1, 1) - timedelta(days=1)
+
+        # Get mood entries for the month
+        mood_entries = await MoodCRUD.get_mood_entries(db, current_user.id, month=month)
+        mood_by_date = {entry.entry_date: entry for entry in mood_entries}
+
+        # Get all habits for the user
+        habits = await habit_crud.get_habits_with_reset_check(db, current_user)
+        habit_ids = [habit.id for habit in habits]
+
+        # Get habit completions for the month
+        habit_completions = {}
+        if habit_ids:
+            result = await db.execute(
+                select(HabitCompletion).where(
+                    and_(
+                        HabitCompletion.habit_id.in_(habit_ids),
+                        HabitCompletion.date >= start_date,
+                        HabitCompletion.date <= end_date,
+                        HabitCompletion.completed == True
+                    )
+                ).order_by(HabitCompletion.date)
+            )
+            completions = result.scalars().all()
+            
+            # Group by date
+            for completion in completions:
+                if completion.date not in habit_completions:
+                    habit_completions[completion.date] = []
+                habit_completions[completion.date].append(completion)
+
+        # Create entries object with date keys (as expected by frontend)
+        entries = {}
+        current_date = start_date
+        
+        while current_date <= end_date:
+            date_str = current_date.strftime('%Y-%m-%d')
+            
+            # Get mood for this date
+            mood_entry = mood_by_date.get(current_date)
+            
+            # Get habit completions for this date
+            completions = habit_completions.get(current_date, [])
+            
+            # Create entry structure expected by frontend
+            entry = {
+                "date": date_str,
+                "happiness": mood_entry.happiness if mood_entry else None,
+                "satisfaction": mood_entry.satisfaction if mood_entry else None,
+                "stress": mood_entry.stress if mood_entry else None,
+                "dayRating": mood_entry.day_rating if mood_entry else None,
+                "notes": mood_entry.note if mood_entry else None,
+                "habitCompletions": [
+                    {"habitId": completion.habit_id, "completed": True}
+                    for completion in completions
+                ] if completions else [],
+                "focusTime": 0,  # Placeholder - can be implemented later
+                "tasks": 0,      # Placeholder - can be implemented later
+                "sessions": 0    # Placeholder - can be implemented later
+            }
+            
+            # Always include the entry (frontend expects all dates in the month)
+            entries[date_str] = entry
+            current_date += timedelta(days=1)
+
+        return entries
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get dashboard entries: {str(e)}"
+        )
 
 async def _get_daily_entries_impl(
     month: Optional[str],
@@ -64,28 +161,29 @@ async def _get_daily_entries_impl(
         mood_by_date = {entry.entry_date: entry for entry in mood_entries}
 
         # Get all habits for the user
-        habits = await HabitCRUD.get_habits(db, current_user.id)
+        habits = await habit_crud.get_habits_with_reset_check(db, current_user)
         habit_ids = [habit.id for habit in habits]
 
         # Get habit completions for the month
         habit_completions = {}
         if habit_ids:
             result = await db.execute(
-                select(HabitStreak).where(
+                select(HabitCompletion).where(
                     and_(
-                        HabitStreak.habit_id.in_(habit_ids),
-                        HabitStreak.date >= start_date,
-                        HabitStreak.date <= end_date
+                        HabitCompletion.habit_id.in_(habit_ids),
+                        HabitCompletion.date >= start_date,
+                        HabitCompletion.date <= end_date,
+                        HabitCompletion.completed == True
                     )
-                ).order_by(HabitStreak.date)
+                ).order_by(HabitCompletion.date)
             )
-            streaks = result.scalars().all()
+            completions = result.scalars().all()
             
             # Group by date
-            for streak in streaks:
-                if streak.date not in habit_completions:
-                    habit_completions[streak.date] = []
-                habit_completions[streak.date].append(streak)
+            for completion in completions:
+                if completion.date not in habit_completions:
+                    habit_completions[completion.date] = []
+                habit_completions[completion.date].append(completion)
 
         # Create daily entries
         daily_entries = []
@@ -98,26 +196,29 @@ async def _get_daily_entries_impl(
             if mood_entry:
                 mood_response = MoodResponse(
                     id=mood_entry.id,
+                    user_id=mood_entry.user_id,
+                    date=mood_entry.entry_date,
                     happiness=mood_entry.happiness,
                     satisfaction=mood_entry.satisfaction,
                     stress=mood_entry.stress,
-                    day_rating=mood_entry.day_rating,
-                    note=mood_entry.note,
-                    date=mood_entry.entry_date,
-                    created_at=mood_entry.created_at
+                    day_rating=mood_entry.day_rating,  # Use database field name due to alias
+                    note=mood_entry.note,  # Use database field name due to alias
+                    created_at=mood_entry.created_at,  # Use database field name due to alias
+                    updated_at=None  # MoodEntry doesn't have updated_at field
                 )
 
             # Get habit completions for this date
             completions = habit_completions.get(current_date, [])
             completion_responses = [
                 HabitCompletionResponse(
-                    id=streak.id,
-                    habit_id=streak.habit_id,
+                    id=completion.id,
+                    habit_id=completion.habit_id,
                     completed=True,
-                    date=streak.date,
-                    created_at=datetime.now()  # Placeholder
+                    date=completion.date,
+                    completed_at=completion.completed_at.isoformat() if completion.completed_at else None,
+                    timezone=completion.timezone
                 )
-                for streak in completions
+                for completion in completions
             ]
 
             # Only include dates that have either mood or habit data
@@ -170,10 +271,9 @@ async def create_daily_entry(
             completed = completion.get('completed', False)
             
             if habit_id:
-                if completed:
-                    await HabitCRUD.mark_habit_complete(db, habit_id, current_user.id, entry.date)
-                else:
-                    await HabitCRUD.unmark_habit_complete(db, habit_id, current_user.id, entry.date)
+                await habit_crud.mark_habit_completion(
+                    db, habit_id, entry.date, completed, current_user
+                )
 
         return {"message": "Daily entry created/updated successfully"}
 

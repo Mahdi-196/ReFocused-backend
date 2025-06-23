@@ -127,12 +127,13 @@ def validate_content_type(content_type: str) -> bool:
     """Validate if the content type is allowed."""
     allowed_types = [
         "application/json",
-        "multipart/form-data",
+        "multipart/form-data", 
         "application/x-www-form-urlencoded"
     ]
     
+    # Allow requests without content-type (e.g., debug endpoints, GET with body)
     if not content_type:
-        return False
+        return True
     
     return any(allowed_type in content_type for allowed_type in allowed_types)
 

@@ -24,6 +24,7 @@ from app.core.security_middleware import (
 from app.core.security_monitor import SecurityMonitor
 from app.db.database import get_db, async_session
 from app.core.auth import get_current_user
+from app.db.models import User
 
 # Basic logging setup
 logging.basicConfig(
@@ -71,6 +72,10 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Include API router
 app.include_router(api_router, prefix="/api/v1")
+
+# Include time router for global timezone management
+from app.routers.time import router as time_router
+app.include_router(time_router, prefix="/api/v1")
 
 # Google OAuth COOP middleware - Fixed to properly handle OAuth flows
 @app.middleware("http")
@@ -182,6 +187,53 @@ async def debug_headers(request: Request):
         "client": request.client.host if request.client else None
     }
 
+# Debug mock date endpoint for testing
+@app.post("/debug/mock-date")
+async def set_mock_date(request: Request, current_user: User = Depends(get_current_user)):
+    """Set mock date for testing purposes (development only, requires authentication)"""
+    if not settings.is_development():
+        raise HTTPException(status_code=403, detail="Debug endpoints only available in development")
+    
+    try:
+        mock_date = None
+        
+        # Try to get from query parameter first
+        mock_date = request.query_params.get("mock_date")
+        
+        # If not in query params, try to get from request body
+        if not mock_date:
+            try:
+                content_type = request.headers.get("content-type", "")
+                if "application/json" in content_type:
+                    body = await request.json()
+                    mock_date = body.get("mock_date")
+                elif "application/x-www-form-urlencoded" in content_type:
+                    form = await request.form()
+                    mock_date = form.get("mock_date")
+            except Exception:
+                pass  # Continue to try other methods
+        
+        if not mock_date:
+            raise HTTPException(status_code=400, detail="mock_date parameter required in query or body")
+        
+        from datetime import datetime
+        parsed_date = datetime.strptime(mock_date, "%Y-%m-%d").date()
+        settings.set_mock_date(parsed_date)
+        return {"message": f"Mock date set to {mock_date}", "current_date": str(settings.get_current_date())}
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error setting mock date: {str(e)}")
+
+@app.delete("/debug/mock-date")
+async def clear_mock_date(current_user: User = Depends(get_current_user)):
+    """Clear mock date (development only, requires authentication)"""
+    if not settings.is_development():
+        raise HTTPException(status_code=403, detail="Debug endpoints only available in development")
+    
+    settings.clear_mock_date()
+    return {"message": "Mock date cleared", "current_date": str(settings.get_current_date())}
+
 # Debug auth endpoint
 @app.get("/debug/auth")
 async def debug_auth(request: Request, db: AsyncSession = Depends(get_db)):
@@ -260,11 +312,27 @@ async def startup_event():
         except Exception as e:
             logger.error(f"Error initializing security monitor: {e}")
         # Session closes automatically when exiting 'async with'
+    
+    # Start the daily streak reset scheduler
+    try:
+        from app.tasks.streak_tasks import scheduler
+        scheduler.start()
+        logger.info("Daily streak reset scheduler started")
+    except Exception as e:
+        logger.error(f"Failed to start streak scheduler: {str(e)}")
 
 # Shutdown event
 @app.on_event("shutdown")
 async def shutdown_event():
     logger.info("Application shutdown - Security features terminated")
+    
+    # Stop the streak scheduler
+    try:
+        from app.tasks.streak_tasks import scheduler
+        scheduler.stop()
+        logger.info("Daily streak reset scheduler stopped")
+    except Exception as e:
+        logger.error(f"Failed to stop streak scheduler: {str(e)}")
 
 @app.get("/")
 async def root():
