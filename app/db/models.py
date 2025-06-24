@@ -392,4 +392,70 @@ class UserStatistics(Base):
     # Unique constraint to ensure one record per user per date
     __table_args__ = (
         UniqueConstraint('user_id', 'date', name='user_date_unique'),
+    )
+
+# Calendar models for enhanced calendar implementation
+class CalendarEntry(Base):
+    __tablename__ = "calendar_entries"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    date = Column(Date, nullable=False, index=True)  # User's local date
+    notes = Column(Text, nullable=True)
+    is_locked = Column(Boolean, default=False, nullable=False)  # Read-only protection for past dates
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    
+    # Relationships
+    user = relationship("User")
+    habit_completions = relationship("CalendarHabitCompletion", back_populates="calendar_entry", cascade="all, delete-orphan")
+    mood_entry = relationship("CalendarMoodEntry", back_populates="calendar_entry", uselist=False, cascade="all, delete-orphan")
+    
+    # Constraints
+    __table_args__ = (
+        UniqueConstraint('user_id', 'date', name='uix_calendar_user_date'),
+        Index('idx_calendar_entries_user_date', 'user_id', 'date'),
+        Index('idx_calendar_entries_locked', 'is_locked'),
+    )
+
+class CalendarHabitCompletion(Base):
+    __tablename__ = "calendar_habit_completions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    calendar_entry_id = Column(Integer, ForeignKey("calendar_entries.id"), nullable=False, index=True)
+    habit_id = Column(Integer, nullable=False, index=True)  # Reference to original habit (may be deleted)
+    habit_name = Column(String(255), nullable=False)  # Historical name preservation
+    completed = Column(Boolean, default=False, nullable=False)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    was_active_on_date = Column(Boolean, default=True, nullable=False)  # Track if habit was active on this date
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    
+    # Relationships
+    calendar_entry = relationship("CalendarEntry", back_populates="habit_completions")
+    
+    # Constraints
+    __table_args__ = (
+        Index('idx_calendar_habit_completions_entry', 'calendar_entry_id'),
+        Index('idx_calendar_habit_completions_habit', 'habit_id'),
+    )
+
+class CalendarMoodEntry(Base):
+    __tablename__ = "calendar_mood_entries"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    calendar_entry_id = Column(Integer, ForeignKey("calendar_entries.id"), nullable=False, unique=True, index=True)
+    happiness = Column(Integer, CheckConstraint("happiness >= 1 AND happiness <= 5"), nullable=False)
+    satisfaction = Column(Integer, CheckConstraint("satisfaction >= 1 AND satisfaction <= 5"), nullable=False)
+    stress = Column(Integer, CheckConstraint("stress >= 1 AND stress <= 5"), nullable=False)
+    day_rating = Column(Integer, CheckConstraint("day_rating >= 1 AND day_rating <= 10"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    
+    # Relationships
+    calendar_entry = relationship("CalendarEntry", back_populates="mood_entry")
+    
+    # Constraints
+    __table_args__ = (
+        Index('idx_calendar_mood_entries_entry', 'calendar_entry_id'),
     ) 
