@@ -28,7 +28,7 @@ def generate_collection_access_token(collection_id: int, user_id: int) -> str:
     payload = {
         "collection_id": collection_id,
         "user_id": user_id,
-        "exp": datetime.utcnow() + timedelta(hours=2)  # 2 hour expiry
+        "exp": datetime.utcnow() + timedelta(hours=1)  # 1 hour expiry
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm="HS256")
 
@@ -160,7 +160,7 @@ async def verify_collection_password(
     
     return CollectionAccessToken(
         access_token=access_token,
-        expires_in=7200,  # 2 hours
+        expires_in=3600,  # 1 hour
         collection_id=collection_id
     )
 

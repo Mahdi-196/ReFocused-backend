@@ -17,8 +17,8 @@ class Settings(BaseSettings):
     # Auth - Secure defaults
     SECRET_KEY: str = Field(..., env="SECRET_KEY", min_length=32)  # Force secret key to be set
     ALGORITHM: str = Field("HS256", env="ALGORITHM")
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(15, env="ACCESS_TOKEN_EXPIRE_MINUTES")  # Shorter for security
-    REFRESH_TOKEN_EXPIRE_DAYS: int = Field(1, env="REFRESH_TOKEN_EXPIRE_DAYS")  # Shorter for security
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(30, env="ACCESS_TOKEN_EXPIRE_MINUTES")  # Typical setting
+    REFRESH_TOKEN_EXPIRE_DAYS: int = Field(7, env="REFRESH_TOKEN_EXPIRE_DAYS")  # Typical setting
     PASSWORD_HASHER: str = Field("bcrypt", env="PASSWORD_HASHER")
     BCRYPT_ROUNDS: int = Field(14, env="BCRYPT_ROUNDS")  # Higher rounds for security
     
