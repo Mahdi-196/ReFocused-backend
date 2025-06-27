@@ -22,6 +22,7 @@ from app.db.models import TokenBlacklist
 from app.schemas.token import TokenResponse
 from app.schemas.google_auth import GoogleAuthRequest, GoogleAuthResponse, UserResponse
 from app.services.google_oauth import GoogleOAuthService
+from app.services.journal_service import JournalService
 from app.core.config import settings
 
 router = APIRouter()
@@ -199,6 +200,9 @@ async def register(data: RegisterSchema, db: AsyncSession = Depends(get_db)) -> 
     await db.commit()
     await db.refresh(user)
     
+    # Set up default journal collection for new user
+    await JournalService.setup_user_journal_async(db, user.id)
+    
     # Log successful registration
     log_security_event(
         event_type="registration_success",
@@ -363,6 +367,9 @@ async def google_auth(
             db.add(user)
             await db.commit()
             await db.refresh(user)
+            
+            # Set up default journal collection for new user
+            await JournalService.setup_user_journal_async(db, user.id)
             
             logger.info(f"New user created successfully: {user.email} (ID: {user.id})")
             
