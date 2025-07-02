@@ -6,6 +6,7 @@ from sqlalchemy.orm import relationship, DeclarativeBase
 from sqlalchemy.sql import func
 from datetime import datetime, timedelta, timezone
 from app.db.database import Base
+from typing import Union
 
 # Base class for all models
 class Base(DeclarativeBase):
@@ -48,7 +49,8 @@ class User(Base):
     security_logs = relationship("SecurityLog", back_populates="user")
     
     # Relationships
-    goals = relationship("Goal", back_populates="user", cascade="all, delete-orphan")
+    goals_2_week = relationship("Goal2Week", back_populates="user", cascade="all, delete-orphan")
+    goals_long_term = relationship("GoalLongTerm", back_populates="user", cascade="all, delete-orphan")
     quick_access = relationship("QuickAccess", back_populates="user", cascade="all, delete-orphan")
     habits = relationship("Habit", back_populates="user", cascade="all, delete-orphan")
     mood_entries = relationship("MoodEntry", back_populates="user", cascade="all, delete-orphan")
@@ -56,27 +58,83 @@ class User(Base):
     study_sets = relationship("StudySet", back_populates="user", cascade="all, delete-orphan")
     mantras = relationship("Mantra", back_populates="user", cascade="all, delete-orphan")
     journal_collections = relationship("JournalCollection", back_populates="user", cascade="all, delete-orphan")
+    gratitude_entries = relationship("Gratitude", cascade="all, delete-orphan")
     statistics = relationship("UserStatistics", back_populates="user", cascade="all, delete-orphan")
 
-# Goal model
-class Goal(Base):
-    __tablename__ = "goals"
+# Base class for shared goal functionality
+class GoalBase(Base):
+    __abstract__ = True
     
     id = Column(Integer, primary_key=True, index=True)
-    title = Column(String(255), nullable=False, index=True)
-    description = Column(Text, nullable=True)
-    target_date = Column(DateTime, nullable=True)
-    is_completed = Column(Boolean, default=False, nullable=False)
-    priority = Column(String(20), default="medium", nullable=False)  # low, medium, high
-    category = Column(String(100), nullable=True)
+    name = Column(String(255), nullable=False, index=True)
+    goal_type = Column(String(20), nullable=False, index=True)  # percentage, counter, checklist
+    target_value = Column(Integer, nullable=False)  # 100 for percentage, 2-999 for counter, 1 for checklist
+    current_value = Column(Integer, default=0, nullable=False)  # Current progress
+    is_completed = Column(Boolean, default=False, nullable=False, index=True)
+    duration = Column(String(20), nullable=False, index=True)  # "2_week" or "long_term"
     
     # User relationship
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    user = relationship("User", back_populates="goals")
     
     # Timestamps
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    
+    # Computed property for progress percentage
+    @property
+    def progress_percentage(self) -> float:
+        """Calculate progress as percentage (0-100)."""
+        if self.target_value == 0:
+            return 0.0
+        return min(100.0, (self.current_value / self.target_value) * 100.0)
+    
+    # Base constraints for all goals
+    __table_args__ = (
+        CheckConstraint('goal_type IN ("percentage", "counter", "checklist")', name='chk_goal_type'),
+        CheckConstraint('target_value >= 1 AND target_value <= 999', name='chk_target_value_range'),
+        CheckConstraint('current_value >= 0', name='chk_current_value_positive'),
+        CheckConstraint('duration IN ("2_week", "long_term")', name='chk_duration_type'),
+        CheckConstraint(
+            '(goal_type = "percentage" AND target_value = 100) OR '
+            '(goal_type = "counter" AND target_value >= 2 AND target_value <= 999) OR '
+            '(goal_type = "checklist" AND target_value = 1)',
+            name='chk_goal_type_target_consistency'
+        ),
+    )
+
+# 2-week goals with expiration
+class Goal2Week(GoalBase):
+    __tablename__ = "goals_2_week"
+    
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    
+    # Relationships
+    user = relationship("User", back_populates="goals_2_week")
+    
+    # Additional constraints and indexes specific to 2-week goals
+    __table_args__ = GoalBase.__table_args__ + (
+        CheckConstraint('duration = "2_week"', name='chk_2week_duration'),
+        Index('idx_goals_2week_user_type', 'user_id', 'goal_type'),
+        Index('idx_goals_2week_user_completed', 'user_id', 'is_completed'),
+        Index('idx_goals_2week_user_expires', 'user_id', 'expires_at'),
+        Index('idx_goals_2week_expires_active', 'expires_at', 'is_completed'),
+    )
+
+# Long-term goals without expiration
+class GoalLongTerm(GoalBase):
+    __tablename__ = "goals_long_term"
+    
+    # Relationships
+    user = relationship("User", back_populates="goals_long_term")
+    
+    # Additional constraints and indexes specific to long-term goals
+    __table_args__ = GoalBase.__table_args__ + (
+        CheckConstraint('duration = "long_term"', name='chk_longterm_duration'),
+        Index('idx_goals_longterm_user_type', 'user_id', 'goal_type'),
+        Index('idx_goals_longterm_user_completed', 'user_id', 'is_completed'),
+    )
+
+
 
 # QuickAccess model
 class QuickAccess(Base):
@@ -166,20 +224,18 @@ class MoodEntry(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     happiness = Column(Integer, nullable=False)  # 1-5
-    satisfaction = Column(Integer, nullable=False)  # 1-5
+    focus = Column(Integer, nullable=False)  # 1-5
     stress = Column(Integer, nullable=False)  # 1-5
-    day_rating = Column(Integer, nullable=False)  # 1-10
     entry_date = Column(Date, nullable=False, index=True)
-    note = Column(Text)
     created_at = Column(DateTime, default=func.now(), nullable=False)
     
     # Relationships
     user = relationship("User", back_populates="mood_entries")
     
-    # Constraints
+    # Constraints - Removed unique constraint to allow multiple entries per day
     __table_args__ = (
-        UniqueConstraint('user_id', 'entry_date', name='uix_user_entry_date'),
-        Index('idx_mood_entries_user_date', 'user_id', 'entry_date')
+        Index('idx_mood_entries_user_date', 'user_id', 'entry_date'),
+        Index('idx_mood_entries_user_date_created', 'user_id', 'entry_date', 'created_at'),  # For finding most recent
     )
 
 # PomodoroSettings model
@@ -235,32 +291,74 @@ class Mantra(Base):
     # Relationships
     user = relationship("User", back_populates="mantras")
 
-# JournalCollection model
+# JournalCollection model - Enhanced version
 class JournalCollection(Base):
     __tablename__ = "journal_collections"
     
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    title = Column(String, nullable=False)
-    created_at = Column(DateTime, default=func.now(), nullable=False)
+    name = Column(String(100), nullable=False)
+    is_private = Column(Boolean, default=False, nullable=False)
+    password_hash = Column(String, nullable=True)  # Bcrypt hashed password for private collections
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     
     # Relationships
     user = relationship("User", back_populates="journal_collections")
     entries = relationship("JournalEntry", back_populates="collection", cascade="all, delete-orphan")
+    
+    # Constraints
+    __table_args__ = (
+        UniqueConstraint('user_id', 'name', name='uix_user_collection_name'),
+        CheckConstraint("LENGTH(TRIM(name)) > 0 AND LENGTH(TRIM(name)) <= 100", name='chk_collection_name_length'),
+        Index('idx_collections_user_id', 'user_id'),
+        Index('idx_collections_user_private', 'user_id', 'is_private'),
+    )
 
-# JournalEntry model
+# JournalEntry model - Enhanced version
 class JournalEntry(Base):
     __tablename__ = "journal_entries"
     
     id = Column(Integer, primary_key=True)
     collection_id = Column(Integer, ForeignKey("journal_collections.id"), nullable=False, index=True)
-    title = Column(String)
-    content = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=func.now(), nullable=False)
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+    title = Column(String(200), nullable=False)
+    content = Column(Text, nullable=False)  # Rich text content
+    is_encrypted = Column(Boolean, default=False, nullable=False)
+    encrypted_content = Column(Text, nullable=True)  # AES encrypted content for private collections
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     
     # Relationships
     collection = relationship("JournalCollection", back_populates="entries")
+    
+    # Constraints
+    __table_args__ = (
+        CheckConstraint("LENGTH(TRIM(title)) > 0 AND LENGTH(TRIM(title)) <= 200", name='chk_entry_title_length'),
+        CheckConstraint("LENGTH(content) <= 50000", name='chk_entry_content_length'),
+        Index('idx_entries_collection_id', 'collection_id'),
+        Index('idx_entries_created_at', 'created_at'),
+        Index('idx_entries_updated_at', 'updated_at'),
+    )
+
+# Gratitude model - New addition
+class Gratitude(Base):
+    __tablename__ = "gratitude_entries"
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    text = Column(String(500), nullable=False)
+    date = Column(Date, nullable=False, default=func.current_date(), index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    
+    # Relationships
+    user = relationship("User", overlaps="gratitude_entries")
+    
+    # Constraints
+    __table_args__ = (
+        CheckConstraint("LENGTH(TRIM(text)) > 0 AND LENGTH(TRIM(text)) <= 500", name='chk_gratitude_text_length'),
+        Index('idx_gratitude_user_date', 'user_id', 'date'),
+        Index('idx_gratitude_date', 'date'),
+    )
 
 class PasswordHistory(Base):
     __tablename__ = "password_history"
@@ -282,12 +380,31 @@ class LoginAttempt(Base):
     user = relationship("User", back_populates="login_attempts")
     
     @classmethod
-    def get_recent_attempts(cls, db, user_id: int, minutes: int):
+    async def get_recent_attempts(cls, db, user_id: int, minutes: int):
+        from sqlalchemy import select
         cutoff = datetime.utcnow() - timedelta(minutes=minutes)
-        return db.query(cls).filter(
-            cls.user_id == user_id,
-            cls.created_at >= cutoff
-        ).all()
+        result = await db.execute(
+            select(cls).where(
+                cls.user_id == user_id,
+                cls.created_at >= cutoff
+            )
+        )
+        return result.scalars().all()
+
+    @classmethod
+    async def create(cls, db, user_id: int, success: bool, ip_address: str):
+        attempt = cls(
+            user_id=user_id,
+            success=success,
+            ip_address=ip_address
+        )
+        db.add(attempt)
+        await db.commit()
+        return attempt
+
+    @classmethod  
+    async def record_attempt(cls, db, user_id: int, success: bool, ip_address: str):
+        return await cls.create(db, user_id, success, ip_address)
 
 class TokenBlacklist(Base):
     __tablename__ = "token_blacklist"
@@ -328,7 +445,7 @@ class SecurityLog(Base):
     user = relationship("User", back_populates="security_logs")
     
     @classmethod
-    def log_event(cls, db, event_type: str, ip_address: str, user_id: int = None,
+    async def log_event(cls, db, event_type: str, ip_address: str, user_id: int = None,
                  user_agent: str = None, details: str = None):
         log = cls(
             user_id=user_id,
@@ -338,7 +455,7 @@ class SecurityLog(Base):
             details=details
         )
         db.add(log)
-        db.commit()
+        await db.commit()
         return log
 
 class SecurityAlert(Base):
@@ -355,7 +472,7 @@ class SecurityAlert(Base):
     resolved_at = Column(DateTime(timezone=True))
     
     @classmethod
-    def create_alert(cls, db, alert_type: str, severity: str, description: str,
+    async def create_alert(cls, db, alert_type: str, severity: str, description: str,
                     ip_address: str = None, user_id: int = None):
         alert = cls(
             alert_type=alert_type,
@@ -365,13 +482,13 @@ class SecurityAlert(Base):
             user_id=user_id
         )
         db.add(alert)
-        db.commit()
+        await db.commit()
         return alert
     
-    def resolve(self, db):
+    async def resolve(self, db):
         self.resolved = True
         self.resolved_at = datetime.utcnow()
-        db.commit()
+        await db.commit()
         return self
 
 # UserStatistics model
@@ -446,7 +563,7 @@ class CalendarMoodEntry(Base):
     id = Column(Integer, primary_key=True, index=True)
     calendar_entry_id = Column(Integer, ForeignKey("calendar_entries.id"), nullable=False, unique=True, index=True)
     happiness = Column(Integer, CheckConstraint("happiness >= 1 AND happiness <= 5"), nullable=False)
-    satisfaction = Column(Integer, CheckConstraint("satisfaction >= 1 AND satisfaction <= 5"), nullable=False)
+    focus = Column(Integer, CheckConstraint("focus >= 1 AND focus <= 5"), nullable=False)
     stress = Column(Integer, CheckConstraint("stress >= 1 AND stress <= 5"), nullable=False)
     day_rating = Column(Integer, CheckConstraint("day_rating >= 1 AND day_rating <= 10"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

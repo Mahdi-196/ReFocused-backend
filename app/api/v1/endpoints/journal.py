@@ -1,10 +1,11 @@
 from datetime import date, datetime, timedelta
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Header
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 import jwt
+import logging
 
-from app.core.database import get_db
+from app.db.database import get_db
 from app.core.auth import get_current_user
 from app.db.models import User
 from app.schemas.journal import (
@@ -21,6 +22,7 @@ from app.utils.rate_limiter import rate_limit
 from app.core.config import settings
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def generate_collection_access_token(collection_id: int, user_id: int) -> str:
@@ -60,10 +62,10 @@ async def get_collections(
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """Get user's journal collections with pagination"""
-    collections, total = JournalCollectionCRUD.get_user_collections(
+    collections, total = await JournalCollectionCRUD.get_user_collections(
         db, current_user.id, skip, limit
     )
     
@@ -82,20 +84,20 @@ async def get_collections(
 async def create_collection(
     collection: JournalCollectionCreate,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """Create a new journal collection"""
-    return JournalCollectionCRUD.create(db, collection, current_user.id)
+    return await JournalCollectionCRUD.create(db, collection, current_user.id)
 
 
 @router.get("/collections/{collection_id}", response_model=JournalCollection)
 async def get_collection(
     collection_id: int,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """Get a specific collection"""
-    collection = JournalCollectionCRUD.get_by_id(db, collection_id, current_user.id)
+    collection = await JournalCollectionCRUD.get_by_id(db, collection_id, current_user.id)
     if not collection:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -110,10 +112,10 @@ async def update_collection(
     collection_id: int,
     collection_update: JournalCollectionUpdate,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """Update a journal collection"""
-    collection = JournalCollectionCRUD.update(
+    collection = await JournalCollectionCRUD.update(
         db, collection_id, current_user.id, collection_update
     )
     if not collection:
@@ -128,10 +130,10 @@ async def update_collection(
 async def delete_collection(
     collection_id: int,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """Delete a journal collection"""
-    success = JournalCollectionCRUD.delete(db, collection_id, current_user.id)
+    success = await JournalCollectionCRUD.delete(db, collection_id, current_user.id)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -145,10 +147,10 @@ async def verify_collection_password(
     collection_id: int,
     password_data: JournalCollectionPasswordVerify,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """Verify password for private collection and return access token"""
-    if not JournalCollectionCRUD.verify_password(
+    if not await JournalCollectionCRUD.verify_password(
         db, collection_id, current_user.id, password_data.password
     ):
         raise HTTPException(
@@ -172,11 +174,11 @@ async def get_collection_entries(
     limit: int = Query(20, ge=1, le=100),
     access_token: Optional[str] = Header(None, alias="X-Collection-Access-Token"),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """Get entries for a specific collection"""
     # Check if collection exists and user has access
-    collection = JournalCollectionCRUD.get_by_id(db, collection_id, current_user.id)
+    collection = await JournalCollectionCRUD.get_by_id(db, collection_id, current_user.id)
     if not collection:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -192,7 +194,7 @@ async def get_collection_entries(
             )
         verify_collection_access_token(access_token, collection_id, current_user.id)
     
-    entries, total = JournalEntryCRUD.get_collection_entries(
+    entries, total = await JournalEntryCRUD.get_collection_entries(
         db, collection_id, current_user.id, skip, limit
     )
     
@@ -213,10 +215,10 @@ async def get_entries(
     limit: int = Query(20, ge=1, le=100),
     search: Optional[str] = Query(None, max_length=100),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """Get user's journal entries with optional search"""
-    entries, total = JournalEntryCRUD.get_user_entries(
+    entries, total = await JournalEntryCRUD.get_user_entries(
         db, current_user.id, skip, limit, search
     )
     
@@ -235,11 +237,11 @@ async def create_entry(
     entry: JournalEntryCreate,
     access_token: Optional[str] = Header(None, alias="X-Collection-Access-Token"),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """Create a new journal entry"""
     # Check if collection exists and user has access
-    collection = JournalCollectionCRUD.get_by_id(db, entry.collection_id, current_user.id)
+    collection = await JournalCollectionCRUD.get_by_id(db, entry.collection_id, current_user.id)
     if not collection:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -255,7 +257,7 @@ async def create_entry(
             )
         verify_collection_access_token(access_token, entry.collection_id, current_user.id)
     
-    return JournalEntryCRUD.create(db, entry, current_user.id)
+    return await JournalEntryCRUD.create(db, entry, current_user.id)
 
 
 @router.get("/entries/{entry_id}", response_model=JournalEntry)
@@ -263,10 +265,10 @@ async def get_entry(
     entry_id: int,
     access_token: Optional[str] = Header(None, alias="X-Collection-Access-Token"),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """Get a specific journal entry"""
-    entry = JournalEntryCRUD.get_by_id(db, entry_id, current_user.id)
+    entry = await JournalEntryCRUD.get_by_id(db, entry_id, current_user.id)
     if not entry:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -291,11 +293,11 @@ async def update_entry(
     entry_update: JournalEntryUpdate,
     access_token: Optional[str] = Header(None, alias="X-Collection-Access-Token"),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """Update a journal entry"""
     # Get entry first to check collection access
-    existing_entry = JournalEntryCRUD.get_by_id(db, entry_id, current_user.id)
+    existing_entry = await JournalEntryCRUD.get_by_id(db, entry_id, current_user.id)
     if not existing_entry:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -311,7 +313,7 @@ async def update_entry(
             )
         verify_collection_access_token(access_token, existing_entry.collection_id, current_user.id)
     
-    entry = JournalEntryCRUD.update(db, entry_id, current_user.id, entry_update)
+    entry = await JournalEntryCRUD.update(db, entry_id, current_user.id, entry_update)
     if not entry:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -325,11 +327,11 @@ async def delete_entry(
     entry_id: int,
     access_token: Optional[str] = Header(None, alias="X-Collection-Access-Token"),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """Delete a journal entry"""
     # Get entry first to check collection access
-    existing_entry = JournalEntryCRUD.get_by_id(db, entry_id, current_user.id)
+    existing_entry = await JournalEntryCRUD.get_by_id(db, entry_id, current_user.id)
     if not existing_entry:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -345,7 +347,7 @@ async def delete_entry(
             )
         verify_collection_access_token(access_token, existing_entry.collection_id, current_user.id)
     
-    success = JournalEntryCRUD.delete(db, entry_id, current_user.id)
+    success = await JournalEntryCRUD.delete(db, entry_id, current_user.id)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -361,10 +363,10 @@ async def get_gratitude(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """Get user's gratitude entries"""
-    gratitude_entries, total = GratitudeCRUD.get_user_gratitude(
+    gratitude_entries, total = await GratitudeCRUD.get_user_gratitude(
         db, current_user.id, skip, limit, start_date, end_date
     )
     
@@ -383,10 +385,42 @@ async def get_gratitude(
 async def create_gratitude(
     gratitude: GratitudeCreate,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """Create a new gratitude entry"""
-    return GratitudeCRUD.create(db, gratitude, current_user.id)
+    try:
+        # Validate the input
+        if not gratitude.text or not gratitude.text.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Gratitude text cannot be empty"
+            )
+        
+        if len(gratitude.text.strip()) > 500:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Gratitude text cannot exceed 500 characters"
+            )
+        
+        # Create the gratitude entry
+        result = await GratitudeCRUD.create(db, gratitude, current_user.id)
+        
+        # Log successful creation in development
+        if settings.is_development():
+            logger.info(f"Created gratitude entry for user {current_user.id}: {gratitude.text[:50]}...")
+        
+        return result
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        # Log unexpected errors
+        logger.error(f"Error creating gratitude entry: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create gratitude entry"
+        )
 
 
 @router.put("/gratitude/{gratitude_id}", response_model=Gratitude)
@@ -395,10 +429,10 @@ async def update_gratitude(
     gratitude_id: int,
     gratitude_update: GratitudeUpdate,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """Update a gratitude entry"""
-    gratitude = GratitudeCRUD.update(
+    gratitude = await GratitudeCRUD.update(
         db, gratitude_id, current_user.id, gratitude_update
     )
     if not gratitude:
@@ -413,10 +447,10 @@ async def update_gratitude(
 async def delete_gratitude(
     gratitude_id: int,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """Delete a gratitude entry"""
-    success = GratitudeCRUD.delete(db, gratitude_id, current_user.id)
+    success = await GratitudeCRUD.delete(db, gratitude_id, current_user.id)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -428,10 +462,10 @@ async def delete_gratitude(
 @router.get("/stats", response_model=JournalStats)
 async def get_journal_stats(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """Get journal statistics for the user"""
-    stats = JournalStatsCRUD.get_user_stats(db, current_user.id)
+    stats = await JournalStatsCRUD.get_user_stats(db, current_user.id)
     return JournalStats(**stats)
 
 

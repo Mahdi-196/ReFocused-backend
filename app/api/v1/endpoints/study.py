@@ -1,7 +1,7 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Request
-from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from sqlalchemy import select, delete
 
 from app.core.auth import get_current_active_user
@@ -238,6 +238,9 @@ async def create_or_update_study_set(
         # Commit the transaction
         await db.commit()
         
+        # Refresh to ensure flashcards are loaded
+        await db.refresh(existing_set, ['flashcards'])
+        
         return StudySetResponse.from_db_model(existing_set)
     
     # Create new study set
@@ -262,6 +265,9 @@ async def create_or_update_study_set(
     
     # Commit the transaction to save changes to the database
     await db.commit()
+    
+    # Refresh the object to get the flashcards relationship loaded
+    await db.refresh(db_study_set, ['flashcards'])
     
     return StudySetResponse.from_db_model(db_study_set)
 
@@ -307,6 +313,9 @@ async def add_card_to_study_set(
     
     # Commit the transaction to save changes
     await db.commit()
+    
+    # Refresh the flashcard to ensure all fields are loaded
+    await db.refresh(flashcard)
     
     return FlashcardResponse.from_db_model(flashcard)
 

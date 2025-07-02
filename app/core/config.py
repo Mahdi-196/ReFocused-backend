@@ -1,30 +1,50 @@
 from typing import List, Dict, Optional
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+import os
+from datetime import datetime, date
 
 
 class Settings(BaseSettings):
     # Application
     APP_NAME: str = Field("ReFocused API", env="APP_NAME")
-    APP_ENV: str = Field("development", env="APP_ENV")
-    DEBUG: bool = Field(True, env="DEBUG")
+    APP_ENV: str = Field("production", env="APP_ENV")
+    DEBUG: bool = Field(False, env="DEBUG")
     API_V1_STR: str = Field("/api/v1", env="API_V1_STR")
 
     # Server
     HOST: str = Field("0.0.0.0", env="HOST")
     PORT: int = Field(8000, env="PORT")
 
-    # Auth - Secure defaults
-    SECRET_KEY: str = Field(..., env="SECRET_KEY", min_length=32)  # Force secret key to be set
-    ALGORITHM: str = Field("HS256", env="ALGORITHM")
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(30, env="ACCESS_TOKEN_EXPIRE_MINUTES")  # Typical setting
-    REFRESH_TOKEN_EXPIRE_DAYS: int = Field(7, env="REFRESH_TOKEN_EXPIRE_DAYS")  # Typical setting
+    # Auth - Professional Grade Settings
+    SECRET_KEY: str = Field(..., env="SECRET_KEY")
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30  # Short-lived access tokens
+    REFRESH_TOKEN_EXPIRE_DAYS: int = Field(7, env="REFRESH_TOKEN_EXPIRE_DAYS")
+    REMEMBER_ME_EXPIRE_DAYS: int = Field(30, env="REMEMBER_ME_EXPIRE_DAYS")  # Remember me duration
     PASSWORD_HASHER: str = Field("bcrypt", env="PASSWORD_HASHER")
-    BCRYPT_ROUNDS: int = Field(14, env="BCRYPT_ROUNDS")  # Higher rounds for security
-    
+    BCRYPT_ROUNDS: int = Field(14, env="BCRYPT_ROUNDS")
+
+    # Cookie Settings
+    COOKIE_SECURE: bool = Field(False, env="COOKIE_SECURE")  # Set to True in production with HTTPS
+    COOKIE_HTTPONLY: bool = Field(True, env="COOKIE_HTTPONLY")
+    COOKIE_SAMESITE: str = Field("lax", env="COOKIE_SAMESITE")  # lax, strict, none
+    COOKIE_DOMAIN: Optional[str] = Field(None, env="COOKIE_DOMAIN")
+    COOKIE_PATH: str = Field("/", env="COOKIE_PATH")
+    COOKIE_MAX_AGE: int = Field(86400 * 30, env="COOKIE_MAX_AGE")  # 30 days
+
+    # Session Settings
+    SESSION_EXPIRE_MINUTES: int = Field(480, env="SESSION_EXPIRE_MINUTES")  # 8 hours default
+    SESSION_AUTO_REFRESH: bool = Field(True, env="SESSION_AUTO_REFRESH")
+    SESSION_REMEMBER_ME_DAYS: int = Field(30, env="SESSION_REMEMBER_ME_DAYS")
+
+    # Auto-refresh settings
+    AUTO_REFRESH_THRESHOLD_MINUTES: int = Field(5, env="AUTO_REFRESH_THRESHOLD_MINUTES")  # Refresh if expires in 5 min
+    AUTO_REFRESH_ENABLED: bool = Field(True, env="AUTO_REFRESH_ENABLED")
+
     # Google OAuth
-    GOOGLE_CLIENT_ID: Optional[str] = Field(None, env="GOOGLE_CLIENT_ID")
-    GOOGLE_CLIENT_SECRET: Optional[str] = Field(None, env="GOOGLE_CLIENT_SECRET")
+    GOOGLE_CLIENT_ID: str = Field(..., env="GOOGLE_CLIENT_ID")
+    GOOGLE_CLIENT_SECRET: str = Field(..., env="GOOGLE_CLIENT_SECRET")
     
     # Auth Flow Configuration
     AUTH_TOKEN_URL: str = Field("/api/v1/auth/login", env="AUTH_TOKEN_URL")
@@ -54,10 +74,9 @@ class Settings(BaseSettings):
     CORS_ALLOWED_HEADERS: List[str] = Field(default_factory=lambda: ["*"], env="CORS_ALLOWED_HEADERS")
 
     # Rate Limiting - DISABLED for development
-    RATE_LIMIT_ENABLED: bool = Field(False, env="RATE_LIMIT_ENABLED")  # Completely disabled
-    RATE_LIMIT_MAX_REQUESTS: int = Field(1000, env="RATE_LIMIT_MAX_REQUESTS")  # Dummy value, not used when disabled
-    RATE_LIMIT_PERIOD_SECONDS: int = Field(60, env="RATE_LIMIT_PERIOD_SECONDS")  # Dummy value, not used when disabled
-    RATE_LIMIT_BLOCK_DURATION: int = Field(300, env="RATE_LIMIT_BLOCK_DURATION")  # Dummy value, not used when disabled
+    RATE_LIMIT_ENABLED: bool = Field(True, env="RATE_LIMIT_ENABLED")
+    RATE_LIMIT_MAX_REQUESTS: int = Field(100, env="RATE_LIMIT_MAX_REQUESTS")
+    RATE_LIMIT_WINDOW_SECONDS: int = Field(3600, env="RATE_LIMIT_WINDOW_SECONDS")  # 1 hour
 
     # Rate‑limit headers
     API_RATE_LIMIT_REMAINING: str = Field("X-RateLimit-Remaining", env="API_RATE_LIMIT_REMAINING")
@@ -86,19 +105,22 @@ class Settings(BaseSettings):
 
     # Security Logging
     SECURITY_LOG_ENABLED: bool = Field(True, env="SECURITY_LOG_ENABLED")
-    SECURITY_LOG_PATH: str = Field("security_events.log", env="SECURITY_LOG_PATH")
+    SECURITY_LOG_PATH: str = Field("security.log", env="SECURITY_LOG_PATH")
     SECURITY_LOG_LEVEL: str = Field("INFO", env="SECURITY_LOG_LEVEL")
-    SECURITY_LOG_FORMAT: str = Field("%(asctime)s - %(levelname)s - %(message)s", env="SECURITY_LOG_FORMAT")
+    SECURITY_LOG_FORMAT: str = Field(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s", 
+        env="SECURITY_LOG_FORMAT"
+    )
 
     # Max Upload Size
     MAX_UPLOAD_SIZE: int = Field(10 * 1024 * 1024, env="MAX_UPLOAD_SIZE")
 
     # Trusted Hosts
-    TRUSTED_HOSTS: List[str] = Field(default_factory=list, env="TRUSTED_HOSTS")
+    TRUSTED_HOSTS: List[str] = Field(default=["*"], env="TRUSTED_HOSTS")
 
-    # Mock date support for testing
-    MOCK_DATE_ENABLED: bool = Field(True, env="MOCK_DATE_ENABLED")  # Enable for development
-    MOCK_DATE: str = Field("2025-06-23", env="MOCK_DATE")  # Format: YYYY-MM-DD
+    # Security thresholds
+    SUSPICIOUS_REQUEST_THRESHOLD: int = Field(50, env="SUSPICIOUS_REQUEST_THRESHOLD")
+    FAILED_AUTH_THRESHOLD: int = Field(5, env="FAILED_AUTH_THRESHOLD")
 
     # Helpers
     def is_development(self) -> bool:
@@ -107,30 +129,9 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.APP_ENV.lower() == "production"
     
-    def get_current_date(self, user=None):
-        """
-        Get current date - can be mocked for testing.
-        
-        DEPRECATED: Use time_service.get_user_current_date(user) for user-specific dates.
-        This method is kept for backward compatibility but should be replaced.
-        """
-        # Check for runtime mock date override (for testing)
-        if hasattr(self, '_runtime_mock_date') and self._runtime_mock_date:
-            return self._runtime_mock_date
-            
-        if self.MOCK_DATE_ENABLED and self.is_development():
-            from datetime import datetime
-            return datetime.strptime(self.MOCK_DATE, "%Y-%m-%d").date()
-        from datetime import date
-        return date.today()
-    
-    def set_mock_date(self, mock_date):
-        """Set runtime mock date for testing"""
-        self._runtime_mock_date = mock_date
-    
-    def clear_mock_date(self):
-        """Clear runtime mock date"""
-        self._runtime_mock_date = None
+    def get_current_date(self) -> date:
+        """Get the current date (always real date now)"""
+        return datetime.now().date()
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
 

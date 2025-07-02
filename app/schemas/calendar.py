@@ -29,7 +29,7 @@ class CalendarHabitCompletionResponse(CalendarHabitCompletionBase):
 # Calendar Mood Entry schemas
 class CalendarMoodEntryBase(BaseModel):
     happiness: int = Field(..., ge=1, le=5, description="Happiness level from 1-5")
-    satisfaction: int = Field(..., ge=1, le=5, description="Satisfaction level from 1-5")
+    focus: int = Field(..., ge=1, le=5, description="Focus level from 1-5")
     stress: int = Field(..., ge=1, le=5, description="Stress level from 1-5")
     day_rating: Optional[int] = Field(None, ge=1, le=10, description="Overall day rating from 1-10")
 
@@ -38,7 +38,7 @@ class CalendarMoodEntryCreate(CalendarMoodEntryBase):
 
 class CalendarMoodEntryUpdate(BaseModel):
     happiness: Optional[int] = Field(None, ge=1, le=5)
-    satisfaction: Optional[int] = Field(None, ge=1, le=5)
+    focus: Optional[int] = Field(None, ge=1, le=5)
     stress: Optional[int] = Field(None, ge=1, le=5)
     day_rating: Optional[int] = Field(None, ge=1, le=10)
 

@@ -1,5 +1,5 @@
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import date
 from .habit import HabitCompletionResponse
 from .mood import MoodResponse
@@ -15,8 +15,11 @@ class DailyEntryResponse(BaseModel):
 class DailyEntryCreate(BaseModel):
     date: date
     happiness: Optional[int] = None
-    satisfaction: Optional[int] = None
+    focus: Optional[int] = None
     stress: Optional[int] = None
     day_rating: Optional[int] = None
     note: Optional[str] = None
-    habit_completions: List[dict] = []  # [{"habit_id": 1, "completed": true}] 
+    habit_completions: List[dict] = []  # [{"habit_id": 1, "completed": true}]
+    
+    class Config:
+        populate_by_name = True 

@@ -6,8 +6,8 @@ import time
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 import logging
 from datetime import datetime
 from fastapi.responses import JSONResponse
@@ -48,7 +48,7 @@ app = FastAPI(
 
 # HTTPS will be handled by AWS infrastructure (ALB/CloudFront)
 
-# CORS must be the FIRST middleware - Enhanced for Google OAuth
+# CORS must be the FIRST middleware - Enhanced for cookies and auth
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -56,12 +56,28 @@ app.add_middleware(
         "http://127.0.0.1:3000",
         "https://accounts.google.com",  # Allow Google OAuth origin
     ],
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
+    allow_credentials=True,  # Essential for cookies
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=[
+        "*",
+        "Authorization",
+        "Content-Type", 
+        "X-Refresh-Token",
+        "X-Requested-With",
+        "Cookie"
+    ],
+    expose_headers=[
+        "Set-Cookie",
+        "X-Process-Time",
+        "X-API-Version"
+    ]
 )
 
-# Add unified security middleware after CORS (replaces multiple middleware for better performance)
+# Add authentication middleware (after CORS, before other middleware)
+from app.core.auth_middleware import AuthenticationMiddleware, SessionAuthenticationMiddleware
+app.add_middleware(SessionAuthenticationMiddleware)  # For automatic refresh
+
+# Add unified security middleware after auth
 from app.core.unified_middleware import UnifiedSecurityMiddleware
 app.add_middleware(UnifiedSecurityMiddleware)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"] if not settings.is_production() else settings.TRUSTED_HOSTS)
@@ -72,10 +88,6 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Include API router
 app.include_router(api_router, prefix="/api/v1")
-
-# Include time router for global timezone management
-from app.routers.time import router as time_router
-app.include_router(time_router, prefix="/api/v1")
 
 # Google OAuth COOP middleware - Fixed to properly handle OAuth flows
 @app.middleware("http")
@@ -187,52 +199,7 @@ async def debug_headers(request: Request):
         "client": request.client.host if request.client else None
     }
 
-# Debug mock date endpoint for testing
-@app.post("/debug/mock-date")
-async def set_mock_date(request: Request, current_user: User = Depends(get_current_user)):
-    """Set mock date for testing purposes (development only, requires authentication)"""
-    if not settings.is_development():
-        raise HTTPException(status_code=403, detail="Debug endpoints only available in development")
-    
-    try:
-        mock_date = None
-        
-        # Try to get from query parameter first
-        mock_date = request.query_params.get("mock_date")
-        
-        # If not in query params, try to get from request body
-        if not mock_date:
-            try:
-                content_type = request.headers.get("content-type", "")
-                if "application/json" in content_type:
-                    body = await request.json()
-                    mock_date = body.get("mock_date")
-                elif "application/x-www-form-urlencoded" in content_type:
-                    form = await request.form()
-                    mock_date = form.get("mock_date")
-            except Exception:
-                pass  # Continue to try other methods
-        
-        if not mock_date:
-            raise HTTPException(status_code=400, detail="mock_date parameter required in query or body")
-        
-        from datetime import datetime
-        parsed_date = datetime.strptime(mock_date, "%Y-%m-%d").date()
-        settings.set_mock_date(parsed_date)
-        return {"message": f"Mock date set to {mock_date}", "current_date": str(settings.get_current_date())}
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error setting mock date: {str(e)}")
-
-@app.delete("/debug/mock-date")
-async def clear_mock_date(current_user: User = Depends(get_current_user)):
-    """Clear mock date (development only, requires authentication)"""
-    if not settings.is_development():
-        raise HTTPException(status_code=403, detail="Debug endpoints only available in development")
-    
-    settings.clear_mock_date()
-    return {"message": "Mock date cleared", "current_date": str(settings.get_current_date())}
+# Debug mock date endpoints removed - using real dates only
 
 # Debug auth endpoint
 @app.get("/debug/auth")
@@ -256,7 +223,7 @@ async def debug_auth(request: Request, db: AsyncSession = Depends(get_db)):
 # Security metrics endpoint
 @app.get("/security/metrics")
 async def get_security_metrics(
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     _: str = Depends(get_current_user)  # Require authentication
 ):
     security_monitor = SecurityMonitor(db)
@@ -266,7 +233,7 @@ async def get_security_metrics(
 @app.get("/security/alerts")
 async def get_security_alerts(
     resolved: bool = False,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     _: str = Depends(get_current_user)  # Require authentication
 ):
     security_monitor = SecurityMonitor(db)
@@ -293,33 +260,53 @@ async def global_exception_handler(request: Request, exc: Exception):
             "method": request.method
         })
     
-    return JSONResponse(
-        status_code=500,
-        content=error_response
-    )
+    # Create response with CORS headers
+    response = JSONResponse(status_code=500, content=error_response)
+    
+    # Add CORS headers to error responses
+    origin = request.headers.get("origin")
+    if origin in ["http://localhost:3000", "http://127.0.0.1:3000", "https://accounts.google.com"]:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+    
+    return response
 
 # Startup event
 @app.on_event("startup")
 async def startup_event():
-    logger.info("Application startup - Security features initialized")
-    logger.info(f"Server started on port {settings.PORT}")
-
-    # Initialize security monitoring using async context manager
-    async with async_session() as db:
-        try:
-            SecurityMonitor(db)
-            logger.info("Security monitoring initialized")
-        except Exception as e:
-            logger.error(f"Error initializing security monitor: {e}")
-        # Session closes automatically when exiting 'async with'
+    """Application startup event"""
+    logger.info("🚀 ReFocused API starting up...")
     
-    # Start the daily streak reset scheduler
+    # Test database connection
     try:
-        from app.tasks.streak_tasks import scheduler
-        scheduler.start()
-        logger.info("Daily streak reset scheduler started")
+        from app.db.database import async_session
+        async with async_session() as db:
+            await db.execute(text("SELECT 1"))
+        logger.info("✅ Database connection successful")
     except Exception as e:
-        logger.error(f"Failed to start streak scheduler: {str(e)}")
+        logger.error(f"❌ Database connection failed: {str(e)}")
+        raise
+    
+    # Load environment configuration
+    logger.info(f"🏃 Running in {settings.APP_ENV} mode")
+    logger.info(f"🔒 Security logging: {'enabled' if settings.SECURITY_LOG_ENABLED else 'disabled'}")
+    logger.info(f"🌐 CORS origins: {settings.CORS_ALLOWED_ORIGINS}")
+    
+    # Start background mood cleanup task
+    try:
+        import asyncio
+        from app.tasks.mood_cleanup import MoodCleanupScheduler
+        
+        # Start the cleanup scheduler in the background
+        asyncio.create_task(MoodCleanupScheduler.schedule_daily_cleanup())
+        logger.info("✅ Mood cleanup scheduler started")
+        
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to start mood cleanup scheduler: {str(e)}")
+    
+    logger.info("🎉 ReFocused API startup complete!")
 
 # Shutdown event
 @app.on_event("shutdown")

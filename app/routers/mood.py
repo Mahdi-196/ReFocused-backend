@@ -7,7 +7,7 @@ import logging
 from app.db.database import get_db
 from app.core.auth import get_current_user
 from app.crud.mood import MoodCRUD
-from app.schemas.mood import MoodCreate, MoodUpdate, MoodResponse
+from app.schemas.mood import MoodCreate, MoodUpdate, MoodResponse, TodayMoodCreate, TodayMoodUpdate
 from app.db.models import User
 
 router = APIRouter()
@@ -23,6 +23,140 @@ def get_user_timezone(x_user_timezone: Optional[str] = Header(None)) -> Optional
         return "UTC"
     
     return x_user_timezone
+
+@router.post("/today", response_model=MoodResponse)
+async def create_today_mood(
+    mood: TodayMoodCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Create today's mood entry (allows multiple entries per day, most recent is kept)"""
+    try:
+        # Always create new mood entry for today (no uniqueness check)
+        mood_data = mood.dict()
+        entry = await MoodCRUD.create_today_mood_entry(db, mood_data, current_user)
+        
+        return MoodResponse(
+            id=entry.id,
+            user_id=entry.user_id,
+            date=entry.entry_date,
+            happiness=entry.happiness,
+            focus=entry.focus,
+            stress=entry.stress,
+            createdAt=entry.created_at,
+            updatedAt=getattr(entry, 'updated_at', None)
+        )
+        
+    except Exception as e:
+        logger.error(f"Error creating today's mood entry for user {current_user.id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create mood entry"
+        )
+
+@router.put("/today", response_model=MoodResponse)
+async def update_today_mood(
+    mood: TodayMoodUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Update today's mood entry"""
+    try:
+        # Update today's mood entry
+        mood_data = mood.dict(exclude_unset=True)
+        if not mood_data:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="At least one field must be provided for update"
+            )
+        
+        updated_entry = await MoodCRUD.update_today_mood_entry(db, mood_data, current_user)
+        if not updated_entry:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No mood entry found for today. Use POST /mood/today to create one."
+            )
+        
+        return MoodResponse(
+            id=updated_entry.id,
+            user_id=updated_entry.user_id,
+            date=updated_entry.entry_date,
+            happiness=updated_entry.happiness,
+            focus=updated_entry.focus,
+            stress=updated_entry.stress,
+            createdAt=updated_entry.created_at,
+            updatedAt=getattr(updated_entry, 'updated_at', None)
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating today's mood entry for user {current_user.id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update mood entry"
+        )
+
+@router.get("/today", response_model=MoodResponse)
+async def get_today_mood(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get today's mood entry"""
+    try:
+        entry = await MoodCRUD.get_today_mood_entry(db, current_user)
+        if not entry:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No mood entry found for today"
+            )
+        
+        return MoodResponse(
+            id=entry.id,
+            user_id=entry.user_id,
+            date=entry.entry_date,
+            happiness=entry.happiness,
+            focus=entry.focus,
+            stress=entry.stress,
+            createdAt=entry.created_at,
+            updatedAt=getattr(entry, 'updated_at', None)
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting today's mood entry for user {current_user.id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve mood entry"
+        )
+
+@router.delete("/today", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_today_mood(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Delete today's mood entry"""
+    try:
+        from app.services.time_service import TimeService
+        time_service = TimeService()
+        today = time_service.get_user_current_date(current_user)
+        
+        success = await MoodCRUD.delete_mood_entry(db, today, current_user.id)
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No mood entry found for today"
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting today's mood entry for user {current_user.id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete mood entry"
+        )
 
 @router.get("/entries", response_model=List[MoodResponse])
 async def get_mood_entries(
@@ -75,10 +209,8 @@ async def get_mood_entries(
                 user_id=entry.user_id,
                 date=entry.entry_date,
                 happiness=entry.happiness,
-                satisfaction=entry.satisfaction,
+                focus=entry.focus,
                 stress=entry.stress,
-                dayRating=getattr(entry, 'day_rating', 3),
-                notes=getattr(entry, 'note', ''),
                 createdAt=entry.created_at,
                 updatedAt=getattr(entry, 'updated_at', None)
             )
@@ -124,10 +256,8 @@ async def get_mood_entry(
             user_id=entry.user_id,
             date=entry.entry_date,
             happiness=entry.happiness,
-            satisfaction=entry.satisfaction,
+            focus=entry.focus,
             stress=entry.stress,
-            dayRating=getattr(entry, 'day_rating', 3),
-            notes=getattr(entry, 'note', ''),
             createdAt=entry.created_at,
             updatedAt=getattr(entry, 'updated_at', None)
         )
@@ -160,12 +290,10 @@ async def get_mood_entries_legacy(
             user_id=entry.user_id,
             date=entry.entry_date,
             happiness=entry.happiness,
-            satisfaction=entry.satisfaction,
+            focus=entry.focus,
             stress=entry.stress,
-            day_rating=getattr(entry, 'day_rating', 3),
-            note=getattr(entry, 'note', ''),
-            created_at=entry.created_at,
-            updated_at=getattr(entry, 'updated_at', None)
+            createdAt=entry.created_at,
+            updatedAt=getattr(entry, 'updated_at', None)
         )
         for entry in entries
     ]
@@ -189,12 +317,10 @@ async def get_mood_entry_legacy(
         user_id=entry.user_id,
         date=entry.entry_date,
         happiness=entry.happiness,
-        satisfaction=entry.satisfaction,
+        focus=entry.focus,
         stress=entry.stress,
-        day_rating=getattr(entry, 'day_rating', 3),
-        note=getattr(entry, 'note', ''),
-        created_at=entry.created_at,
-        updated_at=getattr(entry, 'updated_at', None)
+        createdAt=entry.created_at,
+        updatedAt=getattr(entry, 'updated_at', None)
     )
 
 @router.post("/", response_model=MoodResponse)
@@ -203,7 +329,7 @@ async def create_mood_entry(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Create or update a mood entry (upsert)"""
+    """Create or update a mood entry (upsert) - Legacy endpoint"""
     try:
         entry = await MoodCRUD.upsert_mood_entry(db, mood, current_user.id)
         return MoodResponse(
@@ -211,12 +337,10 @@ async def create_mood_entry(
             user_id=entry.user_id,
             date=entry.entry_date,
             happiness=entry.happiness,
-            satisfaction=entry.satisfaction,
+            focus=entry.focus,
             stress=entry.stress,
-            day_rating=getattr(entry, 'day_rating', 3),
-            note=getattr(entry, 'note', ''),
-            created_at=entry.created_at,
-            updated_at=getattr(entry, 'updated_at', None)
+            createdAt=entry.created_at,
+            updatedAt=getattr(entry, 'updated_at', None)
         )
     except Exception as e:
         logger.error(f"Error creating mood entry: {str(e)}")
@@ -245,12 +369,10 @@ async def update_mood_entry(
         user_id=updated_entry.user_id,
         date=updated_entry.entry_date,
         happiness=updated_entry.happiness,
-        satisfaction=updated_entry.satisfaction,
+        focus=updated_entry.focus,
         stress=updated_entry.stress,
-        day_rating=getattr(updated_entry, 'day_rating', 3),
-        note=getattr(updated_entry, 'note', ''),
-        created_at=updated_entry.created_at,
-        updated_at=getattr(updated_entry, 'updated_at', None)
+        createdAt=updated_entry.created_at,
+        updatedAt=getattr(updated_entry, 'updated_at', None)
     )
 
 @router.delete("/{entry_date}", status_code=status.HTTP_204_NO_CONTENT)

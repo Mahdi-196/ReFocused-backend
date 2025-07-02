@@ -10,14 +10,15 @@ class TokenBlacklist(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     @classmethod
-    def is_blacklisted(cls, db, token: str) -> bool:
-        """Check if a token is blacklisted using synchronous database session."""
-        result = db.query(cls).filter(cls.token == token).first()
-        return result is not None
+    async def is_blacklisted(cls, db, token: str) -> bool:
+        """Check if a token is blacklisted using async database session."""
+        from sqlalchemy import select
+        result = await db.execute(select(cls).where(cls.token == token))
+        return result.scalar_one_or_none() is not None
 
     @classmethod
-    def add_token(cls, db, token: str, expires_at):
-        """Add a token to the blacklist using synchronous database session."""
+    async def add_token(cls, db, token: str, expires_at):
+        """Add a token to the blacklist using async database session."""
         blacklisted_token = cls(token=token, expires_at=expires_at)
         db.add(blacklisted_token)
-        db.commit() 
+        await db.commit() 

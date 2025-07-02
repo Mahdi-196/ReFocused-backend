@@ -104,7 +104,7 @@ async def get_entries_alias(
             entry = {
                 "date": date_str,
                 "happiness": mood_entry.happiness if mood_entry else None,
-                "satisfaction": mood_entry.satisfaction if mood_entry else None,
+                "focus": mood_entry.focus if mood_entry else None,
                 "stress": mood_entry.stress if mood_entry else None,
                 "dayRating": mood_entry.day_rating if mood_entry else None,
                 "notes": mood_entry.note if mood_entry else None,
@@ -199,7 +199,7 @@ async def _get_daily_entries_impl(
                     user_id=mood_entry.user_id,
                     date=mood_entry.entry_date,
                     happiness=mood_entry.happiness,
-                    satisfaction=mood_entry.satisfaction,
+                    focus=mood_entry.focus,
                     stress=mood_entry.stress,
                     day_rating=mood_entry.day_rating,  # Use database field name due to alias
                     note=mood_entry.note,  # Use database field name due to alias
@@ -253,12 +253,12 @@ async def create_daily_entry(
     """Create or update a daily entry with mood and habit completions"""
     try:
         # Create/update mood entry if mood data provided
-        if any([entry.happiness, entry.satisfaction, entry.stress, entry.day_rating]):
+        if any([entry.happiness, entry.focus, entry.stress, entry.day_rating]):
             from app.schemas.mood import MoodCreate
             mood_data = MoodCreate(
                 date=entry.date,
                 happiness=entry.happiness or 3,
-                satisfaction=entry.satisfaction or 3,
+                focus=entry.focus or 3,
                 stress=entry.stress or 3,
                 day_rating=entry.day_rating or 5,
                 note=entry.note

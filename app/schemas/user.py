@@ -24,6 +24,18 @@ class UserResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class UserProfile(BaseModel):
+    """Schema for user profile responses with basic user information."""
+    id: int
+    email: str
+    name: Optional[str] = None
+    profile_picture: Optional[str] = None
+    is_active: bool
+    created_at: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
 class UserInDB(UserResponse):
     hashed_password: str
     failed_login_attempts: int = 0

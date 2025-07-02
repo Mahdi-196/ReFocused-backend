@@ -1,1 +1,1 @@
-# Tasks module for background processing 
+# Tasks package for background jobs 

@@ -1,7 +1,8 @@
 from datetime import datetime, date, timedelta
 from typing import List, Optional, Dict, Any
-from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import and_, or_, desc, func, case
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy import and_, or_, desc, func, case, select
 from fastapi import HTTPException, status
 import bcrypt
 from cryptography.fernet import Fernet
@@ -66,15 +67,17 @@ class JournalCollectionCRUD:
     """CRUD operations for journal collections"""
     
     @staticmethod
-    def create(db: Session, collection: JournalCollectionCreate, user_id: int) -> JournalCollection:
+    async def create(db: AsyncSession, collection: JournalCollectionCreate, user_id: int) -> JournalCollection:
         """Create a new journal collection"""
         # Check for duplicate collection name for user
-        existing = db.query(JournalCollection).filter(
+        stmt = select(JournalCollection).where(
             and_(
                 JournalCollection.user_id == user_id,
                 JournalCollection.name == collection.name.strip()
             )
-        ).first()
+        )
+        result = await db.execute(stmt)
+        existing = result.scalar_one_or_none()
         
         if existing:
             raise HTTPException(
@@ -95,34 +98,44 @@ class JournalCollectionCRUD:
         )
         
         db.add(db_collection)
-        db.commit()
-        db.refresh(db_collection)
+        await db.commit()
+        await db.refresh(db_collection)
         return db_collection
     
     @staticmethod
-    def get_by_id(db: Session, collection_id: int, user_id: int) -> Optional[JournalCollection]:
+    async def get_by_id(db: AsyncSession, collection_id: int, user_id: int) -> Optional[JournalCollection]:
         """Get collection by ID for a specific user"""
-        return db.query(JournalCollection).filter(
+        stmt = select(JournalCollection).where(
             and_(
                 JournalCollection.id == collection_id,
                 JournalCollection.user_id == user_id
             )
-        ).first()
+        )
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
     
     @staticmethod
-    def get_user_collections(
-        db: Session, 
+    async def get_user_collections(
+        db: AsyncSession, 
         user_id: int, 
         skip: int = 0, 
         limit: int = 20
     ) -> tuple[List[JournalCollection], int]:
         """Get user's collections with pagination, ensuring 'My Notes' is first"""
-        query = db.query(JournalCollection).filter(JournalCollection.user_id == user_id)
+        # Get total count
+        count_stmt = select(func.count(JournalCollection.id)).where(JournalCollection.user_id == user_id)
+        count_result = await db.execute(count_stmt)
+        total = count_result.scalar()
         
-        total = query.count()
-        collections = query.options(
-            joinedload(JournalCollection.entries)
-        ).order_by(desc(JournalCollection.updated_at)).offset(skip).limit(limit).all()
+        # Get collections with entries
+        stmt = select(JournalCollection).options(
+            selectinload(JournalCollection.entries)
+        ).where(JournalCollection.user_id == user_id).order_by(
+            desc(JournalCollection.updated_at)
+        ).offset(skip).limit(limit)
+        
+        result = await db.execute(stmt)
+        collections = result.scalars().all()
         
         # Add entry count to each collection
         for collection in collections:
@@ -137,14 +150,14 @@ class JournalCollectionCRUD:
         return collections, total
     
     @staticmethod
-    def update(
-        db: Session, 
+    async def update(
+        db: AsyncSession, 
         collection_id: int, 
         user_id: int, 
         collection_update: JournalCollectionUpdate
     ) -> Optional[JournalCollection]:
         """Update a journal collection"""
-        db_collection = JournalCollectionCRUD.get_by_id(db, collection_id, user_id)
+        db_collection = await JournalCollectionCRUD.get_by_id(db, collection_id, user_id)
         if not db_collection:
             return None
         
@@ -162,13 +175,15 @@ class JournalCollectionCRUD:
         # Update fields
         if collection_update.name is not None:
             # Check for duplicate name
-            existing = db.query(JournalCollection).filter(
+            stmt = select(JournalCollection).where(
                 and_(
                     JournalCollection.user_id == user_id,
                     JournalCollection.name == collection_update.name.strip(),
                     JournalCollection.id != collection_id
                 )
-            ).first()
+            )
+            result = await db.execute(stmt)
+            existing = result.scalar_one_or_none()
             
             if existing:
                 raise HTTPException(
@@ -188,53 +203,53 @@ class JournalCollectionCRUD:
             db_collection.password_hash = None
         
         db_collection.updated_at = datetime.utcnow()
-        db.commit()
-        db.refresh(db_collection)
+        await db.commit()
+        await db.refresh(db_collection)
         return db_collection
     
     @staticmethod
-    def delete(db: Session, collection_id: int, user_id: int) -> bool:
+    async def delete(db: AsyncSession, collection_id: int, user_id: int) -> bool:
         """Delete a journal collection"""
-        db_collection = JournalCollectionCRUD.get_by_id(db, collection_id, user_id)
+        db_collection = await JournalCollectionCRUD.get_by_id(db, collection_id, user_id)
         if not db_collection:
             return False
         
-        db.delete(db_collection)
-        db.commit()
+        await db.delete(db_collection)
+        await db.commit()
         return True
     
     @staticmethod
-    def verify_password(
-        db: Session, 
+    async def verify_password(
+        db: AsyncSession, 
         collection_id: int, 
         user_id: int, 
         password: str
     ) -> bool:
         """Verify collection password"""
-        db_collection = JournalCollectionCRUD.get_by_id(db, collection_id, user_id)
+        db_collection = await JournalCollectionCRUD.get_by_id(db, collection_id, user_id)
         if not db_collection or not db_collection.password_hash:
             return False
         
         return SecurityService.verify_password(password, db_collection.password_hash)
     
     @staticmethod
-    def create_default_collection(db: Session, user_id: int) -> JournalCollection:
+    async def create_default_collection(db: AsyncSession, user_id: int) -> JournalCollection:
         """Create default 'My Notes' collection for new users"""
         default_collection = JournalCollectionCreate(
             name="My Notes",
             is_private=False
         )
-        return JournalCollectionCRUD.create(db, default_collection, user_id)
+        return await JournalCollectionCRUD.create(db, default_collection, user_id)
 
 
 class JournalEntryCRUD:
     """CRUD operations for journal entries"""
     
     @staticmethod
-    def create(db: Session, entry: JournalEntryCreate, user_id: int) -> JournalEntry:
+    async def create(db: AsyncSession, entry: JournalEntryCreate, user_id: int) -> JournalEntry:
         """Create a new journal entry"""
         # Verify collection ownership
-        collection = JournalCollectionCRUD.get_by_id(db, entry.collection_id, user_id)
+        collection = await JournalCollectionCRUD.get_by_id(db, entry.collection_id, user_id)
         if not collection:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -256,37 +271,33 @@ class JournalEntryCRUD:
         
         db_entry = JournalEntry(
             collection_id=entry.collection_id,
-            title=entry.title.strip(),
+            title=entry.title.strip() if entry.title else None,
             content=content,
-            is_encrypted=is_encrypted,
             encrypted_content=encrypted_content,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            is_encrypted=is_encrypted
         )
         
         db.add(db_entry)
-        
-        # Update collection timestamp
-        collection.updated_at = datetime.utcnow()
-        
-        db.commit()
-        db.refresh(db_entry)
+        await db.commit()
+        await db.refresh(db_entry)
         return db_entry
     
     @staticmethod
-    def get_by_id(
-        db: Session, 
+    async def get_by_id(
+        db: AsyncSession, 
         entry_id: int, 
         user_id: int,
         password: Optional[str] = None
     ) -> Optional[JournalEntry]:
         """Get entry by ID with optional decryption"""
-        entry = db.query(JournalEntry).join(JournalCollection).filter(
+        stmt = select(JournalEntry).join(JournalCollection).where(
             and_(
                 JournalEntry.id == entry_id,
                 JournalCollection.user_id == user_id
             )
-        ).first()
+        )
+        result = await db.execute(stmt)
+        entry = result.scalar_one_or_none()
         
         if not entry:
             return None
@@ -302,8 +313,8 @@ class JournalEntryCRUD:
         return entry
     
     @staticmethod
-    def get_collection_entries(
-        db: Session,
+    async def get_collection_entries(
+        db: AsyncSession,
         collection_id: int,
         user_id: int,
         skip: int = 0,
@@ -312,17 +323,19 @@ class JournalEntryCRUD:
     ) -> tuple[List[JournalEntry], int]:
         """Get entries for a specific collection"""
         # Verify collection ownership
-        collection = JournalCollectionCRUD.get_by_id(db, collection_id, user_id)
+        collection = await JournalCollectionCRUD.get_by_id(db, collection_id, user_id)
         if not collection:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Collection not found"
             )
         
-        query = db.query(JournalEntry).filter(JournalEntry.collection_id == collection_id)
-        total = query.count()
+        stmt = select(JournalEntry).filter(JournalEntry.collection_id == collection_id).order_by(
+            desc(JournalEntry.updated_at)
+        ).offset(skip).limit(limit)
         
-        entries = query.order_by(desc(JournalEntry.updated_at)).offset(skip).limit(limit).all()
+        result = await db.execute(stmt)
+        entries = result.scalars().all()
         
         # Decrypt entries if needed
         if collection.is_private and password:
@@ -333,18 +346,18 @@ class JournalEntryCRUD:
                     except Exception:
                         pass
         
-        return entries, total
+        return entries, len(entries)
     
     @staticmethod
-    def get_user_entries(
-        db: Session,
+    async def get_user_entries(
+        db: AsyncSession,
         user_id: int,
         skip: int = 0,
         limit: int = 20,
         search: Optional[str] = None
     ) -> tuple[List[JournalEntry], int]:
         """Get all user's entries with optional search"""
-        query = db.query(JournalEntry).join(JournalCollection).filter(
+        stmt = select(JournalEntry).join(JournalCollection).filter(
             JournalCollection.user_id == user_id
         )
         
@@ -353,23 +366,23 @@ class JournalEntryCRUD:
                 JournalEntry.title.ilike(f"%{search}%"),
                 JournalEntry.content.ilike(f"%{search}%")
             )
-            query = query.filter(search_filter)
+            stmt = stmt.filter(search_filter)
         
-        total = query.count()
-        entries = query.order_by(desc(JournalEntry.updated_at)).offset(skip).limit(limit).all()
+        result = await db.execute(stmt.order_by(desc(JournalEntry.updated_at)).offset(skip).limit(limit))
+        entries = result.scalars().all()
         
-        return entries, total
+        return entries, len(entries)
     
     @staticmethod
-    def update(
-        db: Session,
+    async def update(
+        db: AsyncSession,
         entry_id: int,
         user_id: int,
         entry_update: JournalEntryUpdate,
         password: Optional[str] = None
     ) -> Optional[JournalEntry]:
         """Update a journal entry"""
-        entry = JournalEntryCRUD.get_by_id(db, entry_id, user_id, password)
+        entry = await JournalEntryCRUD.get_by_id(db, entry_id, user_id, password)
         if not entry:
             return None
         
@@ -389,38 +402,40 @@ class JournalEntryCRUD:
         entry.updated_at = datetime.utcnow()
         
         # Update collection timestamp
-        collection = db.query(JournalCollection).filter(
+        collection = await db.get(JournalCollection).filter(
             JournalCollection.id == entry.collection_id
         ).first()
         if collection:
             collection.updated_at = datetime.utcnow()
         
-        db.commit()
-        db.refresh(entry)
+        await db.commit()
+        await db.refresh(entry)
         return entry
     
     @staticmethod
-    def delete(db: Session, entry_id: int, user_id: int) -> bool:
+    async def delete(db: AsyncSession, entry_id: int, user_id: int) -> bool:
         """Delete a journal entry"""
-        entry = db.query(JournalEntry).join(JournalCollection).filter(
+        entry_stmt = select(JournalEntry).join(JournalCollection).where(
             and_(
                 JournalEntry.id == entry_id,
                 JournalCollection.user_id == user_id
             )
-        ).first()
+        )
+        entry_result = await db.execute(entry_stmt)
+        entry = entry_result.scalar_one_or_none()
         
         if not entry:
             return False
         
         # Update collection timestamp
-        collection = db.query(JournalCollection).filter(
-            JournalCollection.id == entry.collection_id
-        ).first()
+        collection_stmt = select(JournalCollection).where(JournalCollection.id == entry.collection_id)
+        collection_result = await db.execute(collection_stmt)
+        collection = collection_result.scalar_one_or_none()
         if collection:
             collection.updated_at = datetime.utcnow()
         
-        db.delete(entry)
-        db.commit()
+        await db.delete(entry)
+        await db.commit()
         return True
 
 
@@ -428,7 +443,7 @@ class GratitudeCRUD:
     """CRUD operations for gratitude entries"""
     
     @staticmethod
-    def create(db: Session, gratitude: GratitudeCreate, user_id: int) -> Gratitude:
+    async def create(db: AsyncSession, gratitude: GratitudeCreate, user_id: int) -> Gratitude:
         """Create a new gratitude entry"""
         # Set date to today if not provided
         entry_date = gratitude.date if gratitude.date else date.today()
@@ -440,23 +455,25 @@ class GratitudeCRUD:
         )
         
         db.add(db_gratitude)
-        db.commit()
-        db.refresh(db_gratitude)
+        await db.commit()
+        await db.refresh(db_gratitude)
         return db_gratitude
     
     @staticmethod
-    def get_by_id(db: Session, gratitude_id: int, user_id: int) -> Optional[Gratitude]:
+    async def get_by_id(db: AsyncSession, gratitude_id: int, user_id: int) -> Optional[Gratitude]:
         """Get gratitude by ID"""
-        return db.query(Gratitude).filter(
+        stmt = select(Gratitude).where(
             and_(
                 Gratitude.id == gratitude_id,
                 Gratitude.user_id == user_id
             )
-        ).first()
+        )
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
     
     @staticmethod
-    def get_user_gratitude(
-        db: Session,
+    async def get_user_gratitude(
+        db: AsyncSession,
         user_id: int,
         skip: int = 0,
         limit: int = 20,
@@ -464,62 +481,64 @@ class GratitudeCRUD:
         end_date: Optional[date] = None
     ) -> tuple[List[Gratitude], int]:
         """Get user's gratitude entries with optional date filtering"""
-        query = db.query(Gratitude).filter(Gratitude.user_id == user_id)
+        stmt = select(Gratitude).filter(Gratitude.user_id == user_id)
         
         if start_date:
-            query = query.filter(Gratitude.date >= start_date)
+            stmt = stmt.filter(Gratitude.date >= start_date)
         if end_date:
-            query = query.filter(Gratitude.date <= end_date)
+            stmt = stmt.filter(Gratitude.date <= end_date)
         
-        total = query.count()
-        gratitude_entries = query.order_by(desc(Gratitude.date)).offset(skip).limit(limit).all()
+        result = await db.execute(stmt.order_by(desc(Gratitude.date)).offset(skip).limit(limit))
+        gratitude_entries = result.scalars().all()
         
-        return gratitude_entries, total
+        return gratitude_entries, len(gratitude_entries)
     
     @staticmethod
-    def update(
-        db: Session,
+    async def update(
+        db: AsyncSession,
         gratitude_id: int,
         user_id: int,
         gratitude_update: GratitudeUpdate
     ) -> Optional[Gratitude]:
         """Update a gratitude entry"""
-        db_gratitude = GratitudeCRUD.get_by_id(db, gratitude_id, user_id)
+        db_gratitude = await GratitudeCRUD.get_by_id(db, gratitude_id, user_id)
         if not db_gratitude:
             return None
         
         if gratitude_update.text is not None:
             db_gratitude.text = gratitude_update.text.strip()
         
-        db.commit()
-        db.refresh(db_gratitude)
+        await db.commit()
+        await db.refresh(db_gratitude)
         return db_gratitude
     
     @staticmethod
-    def delete(db: Session, gratitude_id: int, user_id: int) -> bool:
+    async def delete(db: AsyncSession, gratitude_id: int, user_id: int) -> bool:
         """Delete a gratitude entry"""
-        db_gratitude = GratitudeCRUD.get_by_id(db, gratitude_id, user_id)
+        db_gratitude = await GratitudeCRUD.get_by_id(db, gratitude_id, user_id)
         if not db_gratitude:
             return False
         
-        db.delete(db_gratitude)
-        db.commit()
+        await db.delete(db_gratitude)
+        await db.commit()
         return True
     
     @staticmethod
-    def get_gratitude_streak(db: Session, user_id: int) -> int:
+    async def get_gratitude_streak(db: AsyncSession, user_id: int) -> int:
         """Calculate user's gratitude streak"""
         today = date.today()
         streak = 0
         current_date = today
         
         while True:
-            exists = db.query(Gratitude).filter(
+            stmt = select(Gratitude).where(
                 and_(
                     Gratitude.user_id == user_id,
                     Gratitude.date == current_date
                 )
-            ).first()
+            )
+            result = await db.execute(stmt)
+            exists = result.scalar_one_or_none()
             
             if exists:
                 streak += 1
@@ -534,42 +553,69 @@ class JournalStatsCRUD:
     """Statistics and analytics for journal data"""
     
     @staticmethod
-    def get_user_stats(db: Session, user_id: int) -> Dict[str, Any]:
+    async def get_user_stats(db: AsyncSession, user_id: int) -> Dict[str, Any]:
         """Get comprehensive journal statistics for user"""
         today = date.today()
         week_ago = today - timedelta(days=7)
         month_ago = today - timedelta(days=30)
         
         # Collection stats
-        collections_query = db.query(JournalCollection).filter(
+        total_collections_stmt = select(func.count(JournalCollection.id)).where(
             JournalCollection.user_id == user_id
         )
-        total_collections = collections_query.count()
-        private_collections = collections_query.filter(
-            JournalCollection.is_private == True
-        ).count()
+        total_collections_result = await db.execute(total_collections_stmt)
+        total_collections = total_collections_result.scalar()
+        
+        private_collections_stmt = select(func.count(JournalCollection.id)).where(
+            and_(
+                JournalCollection.user_id == user_id,
+                JournalCollection.is_private == True
+            )
+        )
+        private_collections_result = await db.execute(private_collections_stmt)
+        private_collections = private_collections_result.scalar()
         
         # Entry stats
-        entries_query = db.query(JournalEntry).join(JournalCollection).filter(
+        total_entries_stmt = select(func.count(JournalEntry.id)).join(JournalCollection).where(
             JournalCollection.user_id == user_id
         )
-        total_entries = entries_query.count()
-        entries_this_week = entries_query.filter(
-            JournalEntry.created_at >= week_ago
-        ).count()
-        entries_this_month = entries_query.filter(
-            JournalEntry.created_at >= month_ago
-        ).count()
+        total_entries_result = await db.execute(total_entries_stmt)
+        total_entries = total_entries_result.scalar()
+        
+        entries_this_week_stmt = select(func.count(JournalEntry.id)).join(JournalCollection).where(
+            and_(
+                JournalCollection.user_id == user_id,
+                JournalEntry.created_at >= week_ago
+            )
+        )
+        entries_this_week_result = await db.execute(entries_this_week_stmt)
+        entries_this_week = entries_this_week_result.scalar()
+        
+        entries_this_month_stmt = select(func.count(JournalEntry.id)).join(JournalCollection).where(
+            and_(
+                JournalCollection.user_id == user_id,
+                JournalEntry.created_at >= month_ago
+            )
+        )
+        entries_this_month_result = await db.execute(entries_this_month_stmt)
+        entries_this_month = entries_this_month_result.scalar()
         
         # Gratitude stats
-        gratitude_query = db.query(Gratitude).filter(Gratitude.user_id == user_id)
-        total_gratitude = gratitude_query.count()
-        gratitude_this_week = gratitude_query.filter(
-            Gratitude.date >= week_ago
-        ).count()
+        total_gratitude_stmt = select(func.count(Gratitude.id)).where(Gratitude.user_id == user_id)
+        total_gratitude_result = await db.execute(total_gratitude_stmt)
+        total_gratitude = total_gratitude_result.scalar()
+        
+        gratitude_this_week_stmt = select(func.count(Gratitude.id)).where(
+            and_(
+                Gratitude.user_id == user_id,
+                Gratitude.date >= week_ago
+            )
+        )
+        gratitude_this_week_result = await db.execute(gratitude_this_week_stmt)
+        gratitude_this_week = gratitude_this_week_result.scalar()
         
         # Gratitude streak
-        gratitude_streak = GratitudeCRUD.get_gratitude_streak(db, user_id)
+        gratitude_streak = await GratitudeCRUD.get_gratitude_streak(db, user_id)
         
         return {
             "total_collections": total_collections,

@@ -2,9 +2,14 @@ import logging
 from typing import Optional, Dict, Any
 from google.auth.transport import requests
 from google.oauth2 import id_token
+from google.auth.exceptions import GoogleAuthError
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+class GoogleTokenValidationError(Exception):
+    """Custom exception for Google token validation errors."""
+    pass
 
 class GoogleOAuthService:
     """Service for handling Google OAuth token verification and user data extraction."""
@@ -22,7 +27,7 @@ class GoogleOAuthService:
             )
         return client_id
     
-    async def verify_token(self, token: str) -> Optional[Dict[str, Any]]:
+    async def verify_token(self, token: str) -> Dict[str, Any]:
         """
         Verify Google ID token and extract user information.
         
@@ -30,25 +35,44 @@ class GoogleOAuthService:
             token: Google ID token from frontend
             
         Returns:
-            Dict containing user info if valid, None if invalid
+            Dict containing user info if valid
+            
+        Raises:
+            GoogleTokenValidationError: If token validation fails
         """
+        if not token or not token.strip():
+            raise GoogleTokenValidationError("Token cannot be empty")
+            
         try:
-            # Verify the token with Google's servers
+            # Verify the token with Google's servers using the official library
+            # This validates signature, expiration, issuer, and audience
             idinfo = id_token.verify_oauth2_token(
                 token, 
                 requests.Request(), 
                 self.client_id
             )
             
-            # Check that the token was issued by Google
+            # Verify the token was issued by Google
             if idinfo['iss'] not in ['accounts.google.com', 'https://accounts.google.com']:
-                logger.warning(f"Invalid token issuer: {idinfo['iss']}")
-                return None
+                raise GoogleTokenValidationError(f"Invalid token issuer: {idinfo['iss']}")
+            
+            # Verify audience matches our client ID
+            if idinfo['aud'] != self.client_id:
+                raise GoogleTokenValidationError("Token audience does not match client ID")
                 
+            # Extract and validate required fields
+            google_id = idinfo.get('sub')
+            email = idinfo.get('email')
+            
+            if not google_id:
+                raise GoogleTokenValidationError("Token missing required 'sub' field")
+            if not email:
+                raise GoogleTokenValidationError("Token missing required 'email' field")
+            
             # Extract user information
             user_info = {
-                'google_id': idinfo['sub'],
-                'email': idinfo['email'],
+                'google_id': google_id,
+                'email': email,
                 'email_verified': idinfo.get('email_verified', False),
                 'name': idinfo.get('name', ''),
                 'given_name': idinfo.get('given_name', ''),
@@ -58,20 +82,27 @@ class GoogleOAuthService:
             }
             
             # Log successful verification
-            logger.info(f"Successfully verified Google token for user: {user_info['email']}")
+            logger.info(f"Successfully verified Google token for user: {email}")
             
             return user_info
             
         except ValueError as e:
-            # Invalid token
-            logger.warning(f"Google token verification failed: {str(e)}")
-            return None
+            # Invalid token (signature, expiration, etc.)
+            error_msg = f"Invalid Google token: {str(e)}"
+            logger.warning(error_msg)
+            raise GoogleTokenValidationError(error_msg)
+        except GoogleAuthError as e:
+            # Google Auth library specific errors
+            error_msg = f"Google authentication error: {str(e)}"
+            logger.warning(error_msg)
+            raise GoogleTokenValidationError(error_msg)
         except Exception as e:
-            # Other errors
-            logger.error(f"Unexpected error during Google token verification: {str(e)}")
-            return None
+            # Other unexpected errors
+            error_msg = f"Unexpected error during Google token verification: {str(e)}"
+            logger.error(error_msg)
+            raise GoogleTokenValidationError(error_msg)
     
-    async def verify_id_token(self, id_token: str) -> Optional[Dict[str, Any]]:
+    async def verify_id_token(self, id_token: str) -> Dict[str, Any]:
         """
         Verify Google ID token and extract user information.
         Alias for verify_token method to match auth endpoint expectations.
@@ -80,7 +111,10 @@ class GoogleOAuthService:
             id_token: Google ID token from frontend
             
         Returns:
-            Dict containing user info if valid, None if invalid
+            Dict containing user info if valid
+            
+        Raises:
+            GoogleTokenValidationError: If token validation fails
         """
         return await self.verify_token(id_token)
     

@@ -390,7 +390,7 @@ async def get_calendar_summary(
         # Mood averages
         mood_entries = [entry.mood_entry for entry in entries if entry.mood_entry]
         avg_happiness = sum(m.happiness for m in mood_entries) / len(mood_entries) if mood_entries else 0
-        avg_satisfaction = sum(m.satisfaction for m in mood_entries) / len(mood_entries) if mood_entries else 0
+        avg_focus = sum(m.focus for m in mood_entries) / len(mood_entries) if mood_entries else 0
         avg_stress = sum(m.stress for m in mood_entries) / len(mood_entries) if mood_entries else 0
         
         return {
@@ -411,7 +411,7 @@ async def get_calendar_summary(
             },
             "mood": {
                 "average_happiness": round(avg_happiness, 1),
-                "average_satisfaction": round(avg_satisfaction, 1),
+                "average_focus": round(avg_focus, 1),
                 "average_stress": round(avg_stress, 1),
                 "entries_count": len(mood_entries)
             }

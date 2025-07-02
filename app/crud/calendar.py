@@ -169,7 +169,7 @@ class CalendarCRUD:
                 mood_entry = CalendarMoodEntry(
                     calendar_entry_id=calendar_entry.id,
                     happiness=entry_data.mood_entry.happiness,
-                    satisfaction=entry_data.mood_entry.satisfaction,
+                    focus=entry_data.mood_entry.focus,
                     stress=entry_data.mood_entry.stress,
                     day_rating=entry_data.mood_entry.day_rating
                 )
@@ -248,7 +248,7 @@ class CalendarCRUD:
                 if calendar_entry.mood_entry:
                     # Update existing
                     calendar_entry.mood_entry.happiness = entry_data.mood_entry.happiness
-                    calendar_entry.mood_entry.satisfaction = entry_data.mood_entry.satisfaction
+                    calendar_entry.mood_entry.focus = entry_data.mood_entry.focus
                     calendar_entry.mood_entry.stress = entry_data.mood_entry.stress
                     calendar_entry.mood_entry.day_rating = entry_data.mood_entry.day_rating
                 else:
@@ -256,7 +256,7 @@ class CalendarCRUD:
                     mood_entry = CalendarMoodEntry(
                         calendar_entry_id=calendar_entry.id,
                         happiness=entry_data.mood_entry.happiness,
-                        satisfaction=entry_data.mood_entry.satisfaction,
+                        focus=entry_data.mood_entry.focus,
                         stress=entry_data.mood_entry.stress,
                         day_rating=entry_data.mood_entry.day_rating
                     )
@@ -399,7 +399,7 @@ class CalendarCRUD:
                 calendar_mood_entry = CalendarMoodEntry(
                     calendar_entry_id=calendar_entry.id,
                     happiness=mood_entry.happiness,
-                    satisfaction=mood_entry.satisfaction,
+                    focus=mood_entry.focus,
                     stress=mood_entry.stress,
                     day_rating=getattr(mood_entry, 'day_rating', None)
                 )

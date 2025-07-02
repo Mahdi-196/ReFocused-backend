@@ -12,8 +12,9 @@ from sqlalchemy import create_engine
 def create_test_user():
     """Create a test user with simple credentials"""
     
-    # Database connection
-    engine = create_engine(settings.DATABASE_URL)
+    # Database connection - convert asyncpg URL to psycopg2 for this sync script
+    sync_database_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
+    engine = create_engine(sync_database_url)
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     db = SessionLocal()
     

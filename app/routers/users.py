@@ -5,7 +5,7 @@ from typing import List, Dict, Any
 from datetime import date, timedelta
 
 from app.db.database import get_db
-from app.db.models import User, Goal, Habit, MoodEntry, StudySet, Mantra, JournalCollection
+from app.db.models import User, Goal2Week, GoalLongTerm, Habit, MoodEntry, StudySet, Mantra, JournalCollection
 from app.core.auth import get_current_active_user
 
 from pydantic import BaseModel, EmailStr
@@ -40,17 +40,45 @@ async def get_user_stats(
 ):
     """Get user-specific statistics."""
     
-    # Count goals
-    goals_total_result = await db.execute(select(func.count(Goal.id)).where(Goal.user_id == current_user.id))
-    goals_total = goals_total_result.scalar() or 0
+    # Count goals from both tables
+    from datetime import timezone, datetime
+    current_time = datetime.now(timezone.utc)
     
-    goals_completed_result = await db.execute(
-        select(func.count(Goal.id)).where(
-            Goal.user_id == current_user.id,
-            Goal.is_completed == True
+    # Count 2-week goals (excluding expired)
+    goals_2week_total_result = await db.execute(
+        select(func.count(Goal2Week.id)).where(
+            Goal2Week.user_id == current_user.id,
+            Goal2Week.expires_at > current_time
         )
     )
-    goals_completed = goals_completed_result.scalar() or 0
+    goals_2week_total = goals_2week_total_result.scalar() or 0
+    
+    goals_2week_completed_result = await db.execute(
+        select(func.count(Goal2Week.id)).where(
+            Goal2Week.user_id == current_user.id,
+            Goal2Week.is_completed == True,
+            Goal2Week.expires_at > current_time
+        )
+    )
+    goals_2week_completed = goals_2week_completed_result.scalar() or 0
+    
+    # Count long-term goals
+    goals_longterm_total_result = await db.execute(
+        select(func.count(GoalLongTerm.id)).where(GoalLongTerm.user_id == current_user.id)
+    )
+    goals_longterm_total = goals_longterm_total_result.scalar() or 0
+    
+    goals_longterm_completed_result = await db.execute(
+        select(func.count(GoalLongTerm.id)).where(
+            GoalLongTerm.user_id == current_user.id,
+            GoalLongTerm.is_completed == True
+        )
+    )
+    goals_longterm_completed = goals_longterm_completed_result.scalar() or 0
+    
+    # Combine totals
+    goals_total = goals_2week_total + goals_longterm_total
+    goals_completed = goals_2week_completed + goals_longterm_completed
     
     # Count habits
     habits_total_result = await db.execute(select(func.count(Habit.id)).where(Habit.user_id == current_user.id))
