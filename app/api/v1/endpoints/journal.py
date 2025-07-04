@@ -2,7 +2,7 @@ from datetime import date, datetime, timedelta
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Header
 from sqlalchemy.ext.asyncio import AsyncSession
-import jwt
+from jose import jwt, JWTError
 import logging
 
 from app.db.database import get_db
@@ -43,15 +43,10 @@ def verify_collection_access_token(token: str, collection_id: int, user_id: int)
             payload.get("collection_id") == collection_id and 
             payload.get("user_id") == user_id
         )
-    except jwt.ExpiredSignatureError:
+    except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Collection access token has expired"
-        )
-    except jwt.InvalidTokenError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid collection access token"
+            detail="Invalid or expired collection access token"
         )
 
 
