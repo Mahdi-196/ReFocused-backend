@@ -22,13 +22,35 @@ class TimeService:
             # Default to UTC if timezone is invalid
             return pytz.UTC
     
+    @staticmethod
+    def get_base_utc_time(user: User) -> datetime:
+        """
+        Get the base UTC time - either real current time or mock time if enabled.
+        This is the core method that determines whether to use real or mock time.
+        """
+        # Check if mock date is enabled and mock datetime is set
+        if (hasattr(user, 'mock_date_enabled') and user.mock_date_enabled and 
+            hasattr(user, 'mock_datetime_override') and user.mock_datetime_override is not None):
+            
+            # Use mock datetime as base UTC time
+            mock_dt = user.mock_datetime_override
+            
+            # Ensure it's timezone-aware (should be stored as UTC)
+            if mock_dt.tzinfo is None:
+                mock_dt = pytz.UTC.localize(mock_dt)
+            
+            return mock_dt
+        
+        # Use real current UTC time
+        return datetime.now(pytz.UTC)
+    
     @staticmethod 
     def get_current_date_for_user(user: User) -> date:
-        """Get current date in user's timezone"""
+        """Get current date in user's timezone (respects mock datetime if enabled)"""
         user_tz = TimeService.get_user_timezone(user)
         
-        # Get current UTC time
-        utc_now = datetime.now(pytz.UTC)
+        # Get base UTC time (real or mock)
+        utc_now = TimeService.get_base_utc_time(user)
         
         # Convert to user's timezone
         user_now = utc_now.astimezone(user_tz)
@@ -43,11 +65,11 @@ class TimeService:
     
     @staticmethod
     def get_current_time_for_user(user: User) -> datetime:
-        """Get current datetime in user's timezone"""
+        """Get current datetime in user's timezone (respects mock datetime if enabled)"""
         user_tz = TimeService.get_user_timezone(user)
         
-        # Get current UTC time  
-        utc_now = datetime.now(pytz.UTC)
+        # Get base UTC time (real or mock)
+        utc_now = TimeService.get_base_utc_time(user)
         
         # Convert to user's timezone
         user_now = utc_now.astimezone(user_tz)
@@ -128,4 +150,54 @@ class TimeService:
         """Get the end of the month for the given date"""
         from calendar import monthrange
         _, last_day = monthrange(target_date.year, target_date.month)
-        return target_date.replace(day=last_day) 
+        return target_date.replace(day=last_day)
+    
+    @staticmethod
+    def is_mock_enabled(user: User) -> bool:
+        """Check if mock datetime is enabled for the user"""
+        return (hasattr(user, 'mock_date_enabled') and user.mock_date_enabled and 
+                hasattr(user, 'mock_datetime_override') and user.mock_datetime_override is not None)
+    
+    @staticmethod
+    def get_detailed_time_info(user: User) -> dict:
+        """Get detailed time information for the user matching frontend expectations"""
+        # Get current time in user's timezone
+        user_datetime = TimeService.get_current_time_for_user(user)
+        user_date = user_datetime.date()
+        
+        # Get current UTC time (base time that respects mock settings)
+        utc_datetime = TimeService.get_base_utc_time(user)
+        
+        # Calculate additional time information
+        day_of_week = user_datetime.strftime("%A")
+        week_number = user_datetime.isocalendar()[1]
+        is_weekend = user_datetime.weekday() >= 5  # Saturday = 5, Sunday = 6
+        
+        # Calculate day boundaries in UTC for the user's current date
+        start_of_day_user_tz = TimeService.start_of_day_user_tz(user, user_date)
+        end_of_day_user_tz = TimeService.end_of_day_user_tz(user, user_date)
+        
+        # Convert day boundaries to UTC
+        start_utc = start_of_day_user_tz.astimezone(pytz.UTC)
+        end_utc = end_of_day_user_tz.astimezone(pytz.UTC)
+        
+        # Mock date status
+        is_mock_date = TimeService.is_mock_enabled(user)
+        
+        return {
+            # Required primary fields (frontend expectations)
+            "user_date": user_date.strftime("%Y-%m-%d"),
+            "user_datetime": user_datetime.isoformat(),
+            "timezone": user.timezone,
+            "utc_datetime": utc_datetime.isoformat(),
+            "is_mock_date": is_mock_date,
+            
+            # Additional time context
+            "day_of_week": day_of_week,
+            "week_number": week_number,
+            "is_weekend": is_weekend,
+            "day_boundaries": {
+                "start_utc": start_utc.isoformat(),
+                "end_utc": end_utc.isoformat()
+            }
+        } 

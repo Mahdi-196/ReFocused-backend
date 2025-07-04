@@ -39,6 +39,10 @@ class User(Base):
     timezone_confidence = Column(Float, default=0.5, nullable=False)  # 0.0-1.0 confidence score
     timezone_updated_at = Column(DateTime(timezone=True), server_default=func.now())
     
+    # Mock date/time for testing - developer only features
+    mock_date_enabled = Column(Boolean, default=False, nullable=False)  # Enable mock date functionality
+    mock_datetime_override = Column(DateTime(timezone=True), nullable=True)  # Specific mock datetime (UTC)
+    
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_login = Column(DateTime(timezone=True))
     failed_login_attempts = Column(Integer, default=0)
@@ -79,6 +83,7 @@ class GoalBase(Base):
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    completed_at = Column(DateTime(timezone=True), nullable=True)  # Set when goal is completed
     
     # Computed property for progress percentage
     @property
@@ -93,7 +98,7 @@ class GoalBase(Base):
         CheckConstraint('goal_type IN ("percentage", "counter", "checklist")', name='chk_goal_type'),
         CheckConstraint('target_value >= 1 AND target_value <= 999', name='chk_target_value_range'),
         CheckConstraint('current_value >= 0', name='chk_current_value_positive'),
-        CheckConstraint('duration IN ("2_week", "long_term")', name='chk_duration_type'),
+        CheckConstraint('duration IN ("two_week", "long_term")', name='chk_duration_type'),
         CheckConstraint(
             '(goal_type = "percentage" AND target_value = 100) OR '
             '(goal_type = "counter" AND target_value >= 2 AND target_value <= 999) OR '
@@ -113,7 +118,7 @@ class Goal2Week(GoalBase):
     
     # Additional constraints and indexes specific to 2-week goals
     __table_args__ = GoalBase.__table_args__ + (
-        CheckConstraint('duration = "2_week"', name='chk_2week_duration'),
+        CheckConstraint('duration = "two_week"', name='chk_2week_duration'),
         Index('idx_goals_2week_user_type', 'user_id', 'goal_type'),
         Index('idx_goals_2week_user_completed', 'user_id', 'is_completed'),
         Index('idx_goals_2week_user_expires', 'user_id', 'expires_at'),
