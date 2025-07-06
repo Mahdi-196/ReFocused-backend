@@ -312,6 +312,8 @@ class HabitCRUD:
             )
             existing_completion = completion_result.scalar_one_or_none()
             
+            completion_changed = False
+            
             if completed and not existing_completion:
                 # Create new completion
                 new_completion = HabitCompletion(
@@ -322,20 +324,25 @@ class HabitCRUD:
                     timezone=user.timezone
                 )
                 db.add(new_completion)
+                completion_changed = True
                 
             elif not completed and existing_completion:
                 # Remove existing completion
                 await db.delete(existing_completion)
+                completion_changed = True
                 
             elif existing_completion and existing_completion.completed != completed:
                 # Update existing completion
                 existing_completion.completed = completed
                 existing_completion.completed_at = datetime.now(pytz.UTC)
+                completion_changed = True
             
-            # Recalculate streak
-            await self._recalculate_habit_streak(db, habit_id, user)
+            # Only recalculate streak if completion actually changed
+            if completion_changed:
+                # Recalculate streak after the completion change
+                await self._recalculate_habit_streak(db, habit_id, user)
             
-            # Update habit's last_updated_utc
+            # Update habit's last_updated_utc to current time
             habit.last_updated_utc = datetime.now(pytz.UTC)
             
             await db.commit()
@@ -520,6 +527,9 @@ class HabitCRUD:
         This is the core implementation of the on-demand reset strategy.
         """
         if not habit.last_updated_utc:
+            # If habit has never been updated, just recalculate streak
+            await self._recalculate_habit_streak(db, habit.id, user)
+            habit.last_updated_utc = datetime.now(pytz.UTC)
             return
         
         # Convert last update time to user's timezone and get date
@@ -529,8 +539,16 @@ class HabitCRUD:
         last_updated_date = last_updated_user_tz.date()
         
         # Check if day has changed in user's timezone
-        if last_updated_date < current_user_date:
-            await self._handle_day_change(db, habit, user, last_updated_date, current_user_date)
+        days_since_update = (current_user_date - last_updated_date).days
+        
+        if days_since_update > 0:
+            # Only perform day change logic if it's been more than a day since update
+            # and only if the gap is significant (more than 1 day) to avoid
+            # unnecessary resets during normal daily progression
+            if days_since_update >= 1:
+                await self._handle_day_change(db, habit, user, last_updated_date, current_user_date)
+            
+            # Always update the last_updated_utc to current time
             habit.last_updated_utc = datetime.now(pytz.UTC)
     
     async def _handle_day_change(
@@ -544,14 +562,23 @@ class HabitCRUD:
         """Handle when a habit crosses into a new day"""
         days_missed = (new_date - old_date).days
         
-        if days_missed == 1:
-            # Normal day progression - check if yesterday was completed
-            yesterday_completed = await self._check_date_completed(db, habit.id, old_date)
+        # For small day gaps (1-2 days), check completion history
+        # For larger gaps, always recalculate from scratch
+        if days_missed <= 2:
+            # Check if the previous day was completed
+            yesterday = new_date - timedelta(days=1)
+            yesterday_completed = await self._check_date_completed(db, habit.id, yesterday)
+            
             if not yesterday_completed:
-                habit.streak = 0
+                # Yesterday was not completed, but we need to recalculate the streak
+                # instead of just resetting to 0, as there might be a longer streak
+                await self._recalculate_habit_streak(db, habit.id, user)
+            # If yesterday was completed, leave the streak as is and let
+            # the completion tracking increment it properly
         else:
-            # Multiple days missed - reset streak
-            habit.streak = 0
+            # Multiple days missed - recalculate streak from scratch
+            # Don't just reset to 0, as the user might have a current streak
+            await self._recalculate_habit_streak(db, habit.id, user)
     
     async def _recalculate_habit_streak(
         self, 
@@ -577,13 +604,15 @@ class HabitCRUD:
                 if streak > 1000:
                     break
             
-            # Update habit streak
+            # Update habit streak - get fresh habit object to avoid stale data
             habit_result = await db.execute(
                 select(Habit).where(Habit.id == habit_id)
             )
             habit = habit_result.scalar_one_or_none()
             if habit:
+                old_streak = habit.streak
                 habit.streak = streak
+                logger.info(f"Updated habit {habit_id} streak from {old_streak} to {streak}")
             
             return streak
             
