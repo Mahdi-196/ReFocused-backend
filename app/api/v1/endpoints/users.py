@@ -201,3 +201,82 @@ async def get_user_stats(
         mood_entries_count=mood_entries_count,
         account_age_days=account_age_days
     ) 
+
+
+@router.delete("/me", status_code=status.HTTP_200_OK)
+async def delete_account(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> dict:
+    """
+    Delete the current user's account and all associated data permanently.
+    
+    This endpoint:
+    - Deletes the user account and all related data (goals, habits, mood entries, etc.)
+    - Uses CASCADE relationships to ensure complete data removal
+    - Logs the deletion event for security audit
+    - Cannot be undone - all data will be permanently lost
+    
+    Requires authentication via JWT token.
+    """
+    
+    try:
+        # Get user ID for logging (before deletion)
+        user_id = current_user.id
+        user_email = current_user.email
+        
+        # Log the account deletion attempt for security audit
+        log_security_event(
+            event_type="account_deletion_initiated",
+            details={
+                "user_id": user_id,
+                "email": user_email,
+                "deletion_timestamp": datetime.utcnow().isoformat()
+            },
+            level="warning",
+            user_id=user_id
+        )
+        
+        # Delete the user - CASCADE relationships will handle all related data
+        await db.delete(current_user)
+        await db.commit()
+        
+        # Log successful deletion (using user_id since user no longer exists)
+        log_security_event(
+            event_type="account_deletion_completed",
+            details={
+                "user_id": user_id,
+                "email": user_email,
+                "deletion_timestamp": datetime.utcnow().isoformat(),
+                "status": "success"
+            },
+            level="info"
+        )
+        
+        return {
+            "message": "Account and all associated data have been permanently deleted",
+            "status": "success",
+            "deleted_at": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        # Rollback any partial changes
+        await db.rollback()
+        
+        # Log deletion failure for security audit
+        log_security_event(
+            event_type="account_deletion_failed",
+            details={
+                "user_id": current_user.id,
+                "email": current_user.email,
+                "error": str(e),
+                "deletion_timestamp": datetime.utcnow().isoformat()
+            },
+            level="error",
+            user_id=current_user.id
+        )
+        
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete account. Please try again or contact support."
+        ) 

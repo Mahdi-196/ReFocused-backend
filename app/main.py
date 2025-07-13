@@ -313,13 +313,7 @@ async def startup_event():
 async def shutdown_event():
     logger.info("Application shutdown - Security features terminated")
     
-    # Stop the streak scheduler
-    try:
-        from app.tasks.streak_tasks import scheduler
-        scheduler.stop()
-        logger.info("Daily streak reset scheduler stopped")
-    except Exception as e:
-        logger.error(f"Failed to stop streak scheduler: {str(e)}")
+    # Streak scheduler cleanup removed - module doesn't exist
 
 @app.get("/")
 async def root():

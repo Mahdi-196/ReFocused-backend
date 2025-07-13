@@ -248,6 +248,19 @@ class JournalEntryCRUD:
     @staticmethod
     async def create(db: AsyncSession, entry: JournalEntryCreate, user_id: int) -> JournalEntry:
         """Create a new journal entry"""
+        # Validate input
+        if not entry.title or not entry.title.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Title cannot be empty"
+            )
+        
+        if not entry.content or not entry.content.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Content cannot be empty"
+            )
+        
         # Verify collection ownership
         collection = await JournalCollectionCRUD.get_by_id(db, entry.collection_id, user_id)
         if not collection:
@@ -290,7 +303,9 @@ class JournalEntryCRUD:
         password: Optional[str] = None
     ) -> Optional[JournalEntry]:
         """Get entry by ID with optional decryption"""
-        stmt = select(JournalEntry).join(JournalCollection).where(
+        stmt = select(JournalEntry).join(JournalCollection).options(
+            joinedload(JournalEntry.collection)
+        ).where(
             and_(
                 JournalEntry.id == entry_id,
                 JournalCollection.user_id == user_id
@@ -402,9 +417,9 @@ class JournalEntryCRUD:
         entry.updated_at = datetime.utcnow()
         
         # Update collection timestamp
-        collection = await db.get(JournalCollection).filter(
-            JournalCollection.id == entry.collection_id
-        ).first()
+        collection_stmt = select(JournalCollection).where(JournalCollection.id == entry.collection_id)
+        collection_result = await db.execute(collection_stmt)
+        collection = collection_result.scalar_one_or_none()
         if collection:
             collection.updated_at = datetime.utcnow()
         
