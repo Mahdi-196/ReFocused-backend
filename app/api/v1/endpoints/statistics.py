@@ -16,6 +16,7 @@ from app.schemas.statistics import (
     DetailedStatisticsResponse
 )
 from app.db.models import User
+from app.services.time_service import TimeService
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ router = APIRouter()
 @router.post("/focus", status_code=status.HTTP_200_OK)
 async def update_focus_time(
     data: FocusTimeUpdate,
+    current_date: Optional[str] = Query(None, description="Target date for statistics (YYYY-MM-DD). If not provided, uses current date respecting mock datetime."),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -34,7 +36,16 @@ async def update_focus_time(
     try:
         logger.info(f"🔍 FOCUS data received: {data.model_dump()}")
         logger.info(f"Adding {data.minutes} minutes of focus time for user {current_user.id}")
-        await StatisticsCRUD.add_focus_time(db, current_user.id, data.minutes)
+        
+        # Use TimeService to get the appropriate date
+        if current_date:
+            target_date = TimeService.parse_date_string(current_date)
+            logger.info(f"🔍 Using provided current_date: {current_date}")
+        else:
+            target_date = TimeService.get_current_date_for_user(current_user)
+            logger.info(f"🔍 Using TimeService date: {target_date}")
+        
+        await StatisticsCRUD.add_focus_time_for_date(db, current_user.id, target_date, data.minutes)
         return {"message": "Focus time updated successfully"}
     except Exception as e:
         logger.error(f"Error updating focus time for user {current_user.id}: {str(e)}")
@@ -46,6 +57,7 @@ async def update_focus_time(
 @router.post("/sessions", status_code=status.HTTP_200_OK)
 async def update_sessions(
     data: SessionsUpdate,
+    current_date: Optional[str] = Query(None, description="Target date for statistics (YYYY-MM-DD). If not provided, uses current date respecting mock datetime."),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -55,7 +67,16 @@ async def update_sessions(
     try:
         logger.info(f"🔍 SESSIONS data received: {data.model_dump()}")
         logger.info(f"Adding {data.increment} sessions for user {current_user.id}")
-        await StatisticsCRUD.add_sessions(db, current_user.id, data.increment)
+        
+        # Use TimeService to get the appropriate date
+        if current_date:
+            target_date = TimeService.parse_date_string(current_date)
+            logger.info(f"🔍 Using provided current_date: {current_date}")
+        else:
+            target_date = TimeService.get_current_date_for_user(current_user)
+            logger.info(f"🔍 Using TimeService date: {target_date}")
+        
+        await StatisticsCRUD.add_sessions_for_date(db, current_user.id, target_date, data.increment)
         return {"message": "Sessions updated successfully"}
     except Exception as e:
         logger.error(f"Error updating sessions for user {current_user.id}: {str(e)}")
@@ -67,6 +88,7 @@ async def update_sessions(
 @router.post("/tasks", status_code=status.HTTP_200_OK)
 async def update_tasks(
     data: TasksUpdate,
+    current_date: Optional[str] = Query(None, description="Target date for statistics (YYYY-MM-DD). If not provided, uses current date respecting mock datetime."),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -76,7 +98,16 @@ async def update_tasks(
     try:
         logger.info(f"🔍 TASKS data received: {data.model_dump()}")
         logger.info(f"Adding {data.increment} tasks for user {current_user.id}")
-        await StatisticsCRUD.add_tasks(db, current_user.id, data.increment)
+        
+        # Use TimeService to get the appropriate date
+        if current_date:
+            target_date = TimeService.parse_date_string(current_date)
+            logger.info(f"🔍 Using provided current_date: {current_date}")
+        else:
+            target_date = TimeService.get_current_date_for_user(current_user)
+            logger.info(f"🔍 Using TimeService date: {target_date}")
+        
+        await StatisticsCRUD.add_tasks_for_date(db, current_user.id, target_date, data.increment)
         return {"message": "Tasks updated successfully"}
     except Exception as e:
         logger.error(f"Error updating tasks for user {current_user.id}: {str(e)}")
@@ -90,6 +121,7 @@ async def get_statistics(
     filter: str = Query("D", description="Filter period: D (daily), W (weekly), M (monthly)"),
     startDate: Optional[str] = Query(None, description="Start date for custom range (YYYY-MM-DD)"),
     endDate: Optional[str] = Query(None, description="End date for custom range (YYYY-MM-DD)"),
+    current_date: Optional[str] = Query(None, description="Base date for calculations (YYYY-MM-DD). If not provided, uses current date respecting mock datetime."),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -98,8 +130,17 @@ async def get_statistics(
     
     - filter: D (daily), W (weekly), M (monthly) - used when startDate/endDate not provided
     - startDate/endDate: Custom date range (YYYY-MM-DD format)
+    - current_date: Base date for calculations (respects mock datetime if not provided)
     """
     try:
+        # Determine the base date for calculations
+        if current_date:
+            base_date = TimeService.parse_date_string(current_date)
+            logger.info(f"🔍 Using provided current_date: {current_date}")
+        else:
+            base_date = TimeService.get_current_date_for_user(current_user)
+            logger.info(f"🔍 Using TimeService date: {base_date}")
+        
         # If custom date range is provided, use it instead of filter
         if startDate and endDate:
             # Validate date format
@@ -122,8 +163,8 @@ async def get_statistics(
                     detail="Invalid filter value. Must be D, W, or M."
                 )
             
-            logger.info(f"Getting {filter} statistics for user {current_user.id}")
-            stats = await StatisticsCRUD.get_statistics(db, current_user.id, filter)
+            logger.info(f"Getting {filter} statistics for user {current_user.id} with base date {base_date}")
+            stats = await StatisticsCRUD.get_statistics_for_date(db, current_user.id, filter, base_date)
         
         response = StatisticsResponse(
             focusTime=stats["focus_time"],
@@ -147,6 +188,7 @@ async def get_detailed_statistics(
     filter: str = Query("D", description="Filter period: D (daily), W (weekly), M (monthly)"),
     startDate: Optional[str] = Query(None, description="Start date for custom range (YYYY-MM-DD)"),
     endDate: Optional[str] = Query(None, description="End date for custom range (YYYY-MM-DD)"),
+    current_date: Optional[str] = Query(None, description="Base date for calculations (YYYY-MM-DD). If not provided, uses current date respecting mock datetime."),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -154,6 +196,14 @@ async def get_detailed_statistics(
     Get detailed statistics with daily breakdown for the specified period.
     """
     try:
+        # Determine the base date for calculations
+        if current_date:
+            base_date = TimeService.parse_date_string(current_date)
+            logger.info(f"🔍 Using provided current_date: {current_date}")
+        else:
+            base_date = TimeService.get_current_date_for_user(current_user)
+            logger.info(f"🔍 Using TimeService date: {base_date}")
+        
         # If custom date range is provided, use it instead of filter
         if startDate and endDate:
             # Validate date format
@@ -176,8 +226,8 @@ async def get_detailed_statistics(
                     detail="Invalid filter value. Must be D, W, or M."
                 )
                 
-            logger.info(f"Getting detailed {filter} statistics for user {current_user.id}")
-            result = await StatisticsCRUD.get_detailed_statistics(db, current_user.id, filter)
+            logger.info(f"Getting detailed {filter} statistics for user {current_user.id} with base date {base_date}")
+            result = await StatisticsCRUD.get_detailed_statistics_for_date(db, current_user.id, filter, base_date)
         
         summary = StatisticsResponse(
             focusTime=result["summary"]["focus_time"],
