@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.v1.endpoints import auth, content, goals, users, study, statistics, journal
-from app.routers import habits, mood, dashboard, calendar, time
+from app.routers import habits, mood, dashboard, calendar, time, monitoring
 
 api_router = APIRouter()
 
@@ -17,3 +17,8 @@ api_router.include_router(study.router, prefix="/study/sets", tags=["study"])
 api_router.include_router(statistics.router, prefix="/statistics", tags=["statistics"])
 api_router.include_router(journal.router, prefix="/journal", tags=["journal"])
 api_router.include_router(time.router, prefix="/time", tags=["time"])
+api_router.include_router(monitoring.router, prefix="/monitoring", tags=["monitoring"])
+
+# Export monitoring router for root-level mounting (for /metrics, /health endpoints)
+monitoring_router = APIRouter()
+monitoring_router.include_router(monitoring.router, tags=["monitoring"])

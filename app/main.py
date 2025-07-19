@@ -13,7 +13,7 @@ from datetime import datetime
 from fastapi.responses import JSONResponse
 
 from app.core.config import settings
-from app.api.v1.api import api_router
+from app.api.v1.api import api_router, monitoring_router
 
 from app.core.security_middleware import (
     SecurityMiddleware,
@@ -88,6 +88,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Include API router
 app.include_router(api_router, prefix="/api/v1")
+app.include_router(monitoring_router)  # Mount monitoring at root level
 
 # Google OAuth COOP middleware - Fixed to properly handle OAuth flows
 @app.middleware("http")
