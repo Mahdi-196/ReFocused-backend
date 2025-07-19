@@ -246,7 +246,7 @@ class JournalEntryCRUD:
     """CRUD operations for journal entries"""
     
     @staticmethod
-    async def create(db: AsyncSession, entry: JournalEntryCreate, user_id: int) -> JournalEntry:
+    async def create(db: AsyncSession, entry: JournalEntryCreate, user_id: int, user: User) -> JournalEntry:
         """Create a new journal entry"""
         # Validate input
         if not entry.title or not entry.title.strip():
@@ -282,12 +282,17 @@ class JournalEntryCRUD:
             # Real encryption would need the password from frontend
             is_encrypted = True
         
+        from app.services.time_service import TimeService
+        current_time = TimeService.get_current_time_for_user(user)
+        
         db_entry = JournalEntry(
             collection_id=entry.collection_id,
             title=entry.title.strip() if entry.title else None,
             content=content,
             encrypted_content=encrypted_content,
-            is_encrypted=is_encrypted
+            is_encrypted=is_encrypted,
+            created_at=current_time,
+            updated_at=current_time
         )
         
         db.add(db_entry)
@@ -394,6 +399,7 @@ class JournalEntryCRUD:
         entry_id: int,
         user_id: int,
         entry_update: JournalEntryUpdate,
+        user: User,
         password: Optional[str] = None
     ) -> Optional[JournalEntry]:
         """Update a journal entry"""
@@ -414,14 +420,15 @@ class JournalEntryCRUD:
                     entry_update.content, password
                 )
         
-        entry.updated_at = datetime.utcnow()
+        from app.services.time_service import TimeService
+        entry.updated_at = TimeService.get_current_time_for_user(user)
         
         # Update collection timestamp
         collection_stmt = select(JournalCollection).where(JournalCollection.id == entry.collection_id)
         collection_result = await db.execute(collection_stmt)
         collection = collection_result.scalar_one_or_none()
         if collection:
-            collection.updated_at = datetime.utcnow()
+            collection.updated_at = TimeService.get_current_time_for_user(user)
         
         await db.commit()
         await db.refresh(entry)

@@ -1,6 +1,6 @@
 from sqlalchemy import (
     Column, Integer, String, Text, DateTime, Date, 
-    ForeignKey, Boolean, UniqueConstraint, Index, Float, CheckConstraint
+    ForeignKey, Boolean, UniqueConstraint, Index, Float, CheckConstraint, JSON, DECIMAL
 )
 from sqlalchemy.orm import relationship, DeclarativeBase
 from sqlalchemy.sql import func
@@ -437,6 +437,56 @@ class TokenBlacklist(Base):
         await db.commit()
         return blacklisted_token
 
+class DeletedEmail(Base):
+    __tablename__ = "deleted_emails"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, index=True, nullable=False)
+    deleted_at = Column(DateTime(timezone=True), server_default=func.now())
+    original_user_id = Column(Integer, nullable=False)  # Store the original user ID for reference
+    
+    @classmethod
+    async def is_email_recently_deleted(cls, db, email: str) -> Union[bool, dict]:
+        """Check if an email was deleted within the last 72 hours"""
+        from sqlalchemy import select
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=72)
+        result = await db.execute(
+            select(cls).where(
+                cls.email == email,
+                cls.deleted_at > cutoff_time
+            )
+        )
+        deleted_email = result.scalar_one_or_none()
+        if deleted_email:
+            # Calculate hours remaining until the email can be used again
+            hours_since_deletion = (datetime.now(timezone.utc) - deleted_email.deleted_at).total_seconds() / 3600
+            hours_remaining = 72 - hours_since_deletion
+            return {
+                "is_deleted": True,
+                "hours_remaining": max(0, round(hours_remaining, 1)),
+                "deleted_at": deleted_email.deleted_at.isoformat(),
+                "available_at": (deleted_email.deleted_at + timedelta(hours=72)).isoformat()
+            }
+        return {"is_deleted": False}
+    
+    @classmethod
+    async def add_deleted_email(cls, db, email: str, user_id: int):
+        """Record a deleted email address"""
+        deleted_email = cls(email=email, original_user_id=user_id)
+        db.add(deleted_email)
+        await db.commit()
+        return deleted_email
+    
+    @classmethod
+    async def cleanup_expired_entries(cls, db):
+        """Remove entries older than 72 hours"""
+        from sqlalchemy import delete
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=72)
+        await db.execute(
+            delete(cls).where(cls.deleted_at <= cutoff_time)
+        )
+        await db.commit()
+
 class SecurityLog(Base):
     __tablename__ = "security_logs"
     
@@ -580,4 +630,6 @@ class CalendarMoodEntry(Base):
     # Constraints
     __table_args__ = (
         Index('idx_calendar_mood_entries_entry', 'calendar_entry_id'),
-    ) 
+    )
+
+ 

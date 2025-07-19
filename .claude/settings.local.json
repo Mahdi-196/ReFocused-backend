@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(alembic history:*)",
+      "Bash(python -m alembic:*)",
+      "Bash(python3 -m alembic history:*)",
+      "Bash(source:*)",
+      "Bash(python3:*)",
+      "Bash(ls:*)",
+      "Bash(alembic upgrade:*)",
+      "Bash(python:*)",
+      "Bash(./venv/bin/python:*)",
+      "Bash(mkdir:*)",
+      "Bash(rm:*)",
+      "Bash(redis-cli:*)",
+      "Bash(curl:*)",
+      "Bash(alembic revision:*)",
+      "Bash(PGPASSWORD=password psql -h localhost -U postgres -d refocused -c \"SELECT table_name FROM information_schema.tables WHERE table_schema = ''public'' AND (table_name LIKE ''%productivity%'' OR table_name LIKE ''%activity%'');\")",
+      "Bash(PGPASSWORD=password psql:*)",
+      "Bash(alembic current:*)",
+      "Bash(alembic downgrade:*)",
+      "Bash(alembic stamp:*)"
+    ],
+    "deny": []
+  }
+}

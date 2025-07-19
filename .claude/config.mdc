@@ -1,0 +1,88 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# MDC Rules Configuration (Backend)
+
+# Save this as `.mdc/backend_config.yml` in your project root
+
+rules:
+
+* name: "use-python"
+  description: "Reject non-Python files; allow only .py."
+  apply:
+  when: file
+  pattern: "\\.py\$"
+  message: "❌ File '{path}' must be a Python (.py) file."
+
+* name: "backend-only"
+  description: "Allow only backend code; detect frontend requests."
+  apply:
+  when: generate
+  target: "frontend"
+  action: "skip"
+  message: |
+  🚧 Frontend-related request detected. Skipping frontend code.
+  At the end of your response, summarize required frontend tasks and how to implement them.
+
+* name: "docker-first"
+  description: "Prioritize Docker containerization."
+  apply:
+  when: generate
+  target: "backend"
+  steps:
+  \- "Provide a Dockerfile to containerize the service."
+  \- "Include a docker-compose.yml to orchestrate the app and Postgres."
+  \- "Ensure the Docker setup uses best practices: minimal images, non-root user, health checks."
+
+* name: "postgres-only"
+  description: "Use Postgres for all data storage."
+  apply:
+  when: code
+  pattern: "sqlite3|pymongo|mysql"
+  message: "❌ Only Postgres is allowed for database; replace with psycopg2 or asyncpg."
+
+* name: "security-expert"
+  description: "Enforce security best practices."
+  apply:
+  when: code
+  pattern: "."
+  message: |
+  🔒 Follow security best practices: validate and sanitize inputs, handle secrets via ENV, use parameterized queries, enable HTTPS, and avoid insecure defaults.
+
+* name: "lean-code"
+  description: "Favor minimal imports and concise implementations."
+  apply:
+  when: code
+  pattern: "print\\(|TODO"
+  message: "🔍 Remove print-debugging and TODO comments."
+
+* name: "assistant-guidelines"
+  description: "Enforce structured, concise responses with headings, lists, code blocks, and diffs."
+  apply:
+  when: response
+  checks:
+  heading:
+  type: regex
+  pattern: "^#{1,6}\s+"
+  bullets:
+  type: regex
+  pattern: "^\s\*\[-\*]\s+.+"
+  codeBlock:
+  type: regex
+  pattern: "`[\\s\\S]*?`"
+  diffBlock:
+  type: composite
+  patterns:
+  \- "\\+ .+"
+  \- "`diff"
+      noTodo:
+        type: regex
+        pattern: "\\bTODO\\b"
+    messages:
+      heading: "❌ Please include a Markdown heading."
+      bullets: "❌ Use bullet points for lists."
+      codeBlock: "❌ Wrap code examples in fenced code blocks."
+      diffBlock: "❌ Show diffs with `diff."
+  noTodo: "❌ Remove any TODO comments."

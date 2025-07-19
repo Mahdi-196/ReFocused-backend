@@ -328,6 +328,20 @@ async def register(data: RegisterSchema, db: AsyncSession = Depends(get_db)) -> 
     result = await db.execute(select(User).where(User.email == data.email))
     if result.scalar_one_or_none():
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Email already registered")
+    
+    # Check if email was recently deleted (within 72 hours)
+    from app.db.models import DeletedEmail
+    deleted_check = await DeletedEmail.is_email_recently_deleted(db, data.email)
+    if deleted_check["is_deleted"]:
+        raise HTTPException(
+            status_code=400, 
+            detail={
+                "error": "email_recently_deleted",
+                "message": f"This email address cannot be used to create a new account. Please try again in {deleted_check['hours_remaining']} hours.",
+                "hours_remaining": deleted_check["hours_remaining"],
+                "available_at": deleted_check["available_at"]
+            }
+        )
     user = User(
         email=data.email,
         hashed_password=get_password_hash(data.password),
@@ -370,6 +384,7 @@ async def register(data: RegisterSchema, db: AsyncSession = Depends(get_db)) -> 
 @router.post("/google", response_model=GoogleAuthResponse)
 async def google_auth(
     request: GoogleAuthRequest,
+    response: Response,
     db: AsyncSession = Depends(get_db)
 ) -> Any:
     """
@@ -456,6 +471,20 @@ async def google_auth(
             
             logger.info(f"Generated unique email: {unique_email}")
             
+            # Check if the generated email was recently deleted (within 72 hours)
+            from app.db.models import DeletedEmail
+            deleted_check = await DeletedEmail.is_email_recently_deleted(db, unique_email)
+            if deleted_check["is_deleted"]:
+                raise HTTPException(
+                    status_code=400, 
+                    detail={
+                        "error": "email_recently_deleted",
+                        "message": f"This email address cannot be used to create a new account. Please try again in {deleted_check['hours_remaining']} hours.",
+                        "hours_remaining": deleted_check["hours_remaining"],
+                        "available_at": deleted_check["available_at"]
+                    }
+                )
+            
             # Create new user
             user = User(
                 email=unique_email,
@@ -482,14 +511,11 @@ async def google_auth(
                 user_id=user.id
             )
         
-        logger.info("Generating JWT access token...")
+        logger.info("Generating session tokens and setting cookies...")
         
-        # Generate JWT access token
-        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-        access_token = create_access_token(
-            data={"sub": user.email, "user_id": user.id},
-            expires_delta=access_token_expires
-        )
+        # Use enhanced auth service to create session tokens and set cookies
+        tokens = enhanced_auth_service.create_session_tokens(user, remember_me=True)
+        enhanced_auth_service.set_auth_cookies(response, tokens)
         
         # Log successful authentication
         log_security_event(
@@ -511,10 +537,10 @@ async def google_auth(
         logger.info(f"Google OAuth authentication successful for user: {user.email}")
         
         return GoogleAuthResponse(
-            access_token=access_token,
+            access_token=tokens["access_token"],
             user=user_response,
             token_type="bearer",
-            expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+            expires_in=tokens["expires_in"]
         )
         
     except HTTPException:

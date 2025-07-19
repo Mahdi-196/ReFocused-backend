@@ -8,6 +8,37 @@ from app.core.config import settings
 # In production, use Redis or similar
 rate_limit_store = defaultdict(list)
 
+class RateLimiter:
+    """Rate limiter class for API endpoints."""
+    
+    def __init__(self):
+        self.store = defaultdict(list)
+    
+    async def check_rate_limit(
+        self, 
+        key: str, 
+        max_requests: int, 
+        window_seconds: int
+    ) -> None:
+        """Check if request exceeds rate limit."""
+        current_time = time.time()
+        
+        # Clean old requests
+        self.store[key] = [
+            req_time for req_time in self.store[key]
+            if current_time - req_time < window_seconds
+        ]
+        
+        # Check rate limit
+        if len(self.store[key]) >= max_requests:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Rate limit exceeded. Max {max_requests} requests per {window_seconds} seconds."
+            )
+        
+        # Add current request
+        self.store[key].append(current_time)
+
 def rate_limit():
     """Rate limiting decorator."""
     def decorator(func):

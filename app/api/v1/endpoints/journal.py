@@ -252,7 +252,7 @@ async def create_entry(
             )
         verify_collection_access_token(access_token, entry.collection_id, current_user.id)
     
-    return await JournalEntryCRUD.create(db, entry, current_user.id)
+    return await JournalEntryCRUD.create(db, entry, current_user.id, current_user)
 
 
 @router.get("/entries/{entry_id}", response_model=JournalEntry)
@@ -308,7 +308,7 @@ async def update_entry(
             )
         verify_collection_access_token(access_token, existing_entry.collection_id, current_user.id)
     
-    entry = await JournalEntryCRUD.update(db, entry_id, current_user.id, entry_update)
+    entry = await JournalEntryCRUD.update(db, entry_id, current_user.id, entry_update, current_user)
     if not entry:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
