@@ -382,12 +382,11 @@ async def _get_goals_history_logic(
     """
     Core logic for fetching paginated goals history.
     
-    Fetches completed goals from both Goal2Week and GoalLongTerm tables,
-    excluding those completed within the last 24 hours to maintain UI consistency.
+    Fetches completed goals from both Goal2Week and GoalLongTerm tables
+    within the specified date range.
     """
     current_time = datetime.now(timezone.utc)
     start_date = current_time - timedelta(days=days_back)
-    cutoff_time = current_time - timedelta(hours=24)  # 24-hour exclusion
     
     goals = []
     
@@ -397,8 +396,7 @@ async def _get_goals_history_logic(
             and_(
                 Goal2Week.user_id == user_id,
                 Goal2Week.is_completed == True,
-                Goal2Week.completed_at >= start_date,
-                Goal2Week.completed_at < cutoff_time  # Exclude last 24 hours
+                Goal2Week.completed_at >= start_date
             )
         )
         
@@ -415,8 +413,7 @@ async def _get_goals_history_logic(
             and_(
                 GoalLongTerm.user_id == user_id,
                 GoalLongTerm.is_completed == True,
-                GoalLongTerm.completed_at >= start_date,
-                GoalLongTerm.completed_at < cutoff_time  # Exclude last 24 hours
+                GoalLongTerm.completed_at >= start_date
             )
         )
         
@@ -464,7 +461,7 @@ async def _get_goals_history_logic(
         actual_end = max(goal.completed_at for goal in paginated_goals)
     else:
         actual_start = start_date
-        actual_end = cutoff_time
+        actual_end = current_time
     
     return GoalsHistoryResponse(
         goals=history_entries,
@@ -492,7 +489,7 @@ async def get_goals_history(
     Get paginated history of completed goals.
     
     Implements the Goals Completion History system with:
-    - 24-hour exclusion of recently completed goals
+    - All completed goals within the specified date range
     - Dual table querying (2-week and long-term goals)
     - Proper sorting by completion date
     - Dynamic completion days calculation

@@ -43,6 +43,12 @@ class User(Base):
     mock_date_enabled = Column(Boolean, default=False, nullable=False)  # Enable mock date functionality
     mock_datetime_override = Column(DateTime(timezone=True), nullable=True)  # Specific mock datetime (UTC)
     
+    # Daily app interaction tracking
+    current_streak = Column(Integer, default=0, nullable=False)  # Current daily interaction streak
+    longest_streak = Column(Integer, default=0, nullable=False)  # All-time longest streak
+    last_interaction_date = Column(Date, nullable=True)  # Last date user interacted with app (in user's timezone)
+    streak_updated_at = Column(DateTime(timezone=True), nullable=True)  # When streak was last updated
+    
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_login = Column(DateTime(timezone=True))
     failed_login_attempts = Column(Integer, default=0)
@@ -630,6 +636,29 @@ class CalendarMoodEntry(Base):
     # Constraints
     __table_args__ = (
         Index('idx_calendar_mood_entries_entry', 'calendar_entry_id'),
+    )
+
+# UserDailyStreak model - tracks detailed daily interaction history
+class UserDailyStreak(Base):
+    __tablename__ = "user_daily_streaks"
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    date = Column(Date, nullable=False, index=True)  # User's local date
+    interaction_count = Column(Integer, default=0, nullable=False)  # Number of meaningful interactions that day
+    first_interaction = Column(DateTime(timezone=True), nullable=True)  # First interaction of the day
+    last_interaction = Column(DateTime(timezone=True), nullable=True)  # Last interaction of the day
+    interaction_types = Column(JSON, nullable=False, default=list)  # List of interaction types that day
+    timezone = Column(String(50), nullable=False)  # User's timezone when interaction occurred
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationships
+    user = relationship("User")
+    
+    # Constraints
+    __table_args__ = (
+        UniqueConstraint('user_id', 'date', name='uix_user_daily_streak_date'),
+        Index('idx_user_daily_streaks_user_date', 'user_id', 'date'),
     )
 
  

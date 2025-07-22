@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     DATABASE_POOL_TIMEOUT: int = Field(30, env="DATABASE_POOL_TIMEOUT")
     DATABASE_POOL_RECYCLE: int = Field(1800, env="DATABASE_POOL_RECYCLE")
     
+    # Redis Configuration
+    REDIS_URL: str = Field("redis://localhost:6379/1", env="REDIS_URL")
+    
     # Celery Configuration
     CELERY_BROKER_URL: str = Field("redis://localhost:6379/0", env="CELERY_BROKER_URL")
     CELERY_RESULT_BACKEND: str = Field("redis://localhost:6379/0", env="CELERY_RESULT_BACKEND")

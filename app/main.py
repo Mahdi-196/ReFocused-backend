@@ -22,6 +22,7 @@ from app.core.security_middleware import (
     UserDataIsolationMiddleware
 )
 from app.core.security_monitor import SecurityMonitor
+from app.core.streak_middleware import StreakTrackingMiddleware
 from app.db.database import get_db, async_session
 from app.core.auth import get_current_user
 from app.db.models import User
@@ -80,6 +81,10 @@ app.add_middleware(SessionAuthenticationMiddleware)  # For automatic refresh
 # Add unified security middleware after auth
 from app.core.unified_middleware import UnifiedSecurityMiddleware
 app.add_middleware(UnifiedSecurityMiddleware)
+
+# Add streak tracking middleware
+app.add_middleware(StreakTrackingMiddleware)
+
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"] if not settings.is_production() else settings.TRUSTED_HOSTS)
 app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
 

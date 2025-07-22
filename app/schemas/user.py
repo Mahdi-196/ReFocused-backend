@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, EmailStr, Field
 from datetime import datetime
 
@@ -47,3 +47,65 @@ class UserInDB(UserResponse):
 
 class AccountDeleteRequest(BaseModel):
     password: str = Field(..., min_length=8, max_length=128) 
+
+class AvatarConfig(BaseModel):
+    """Schema for avatar configuration data."""
+    style: str = Field(..., description="Avatar style (e.g., 'open-peeps', 'adventurer', 'lorelei')")
+    seed: str = Field(..., description="Unique seed/identifier for the avatar")
+    options: Optional[Dict[str, Any]] = Field(default=None, description="Additional avatar options/customizations")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "style": "open-peeps",
+                "seed": "user123_avatar",
+                "options": {
+                    "accessory": "glasses",
+                    "clothing": "shirt"
+                }
+            }
+        }
+
+class AvatarUpdateRequest(BaseModel):
+    """Schema for updating user avatar."""
+    avatar_config: AvatarConfig
+    avatar_url: Optional[str] = Field(default=None, description="Generated avatar URL (optional)")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "avatar_config": {
+                    "style": "open-peeps",
+                    "seed": "user123_avatar",
+                    "options": {}
+                },
+                "avatar_url": "https://api.dicebear.com/7.x/open-peeps/svg?seed=user123_avatar"
+            }
+        }
+
+class AvatarResponse(BaseModel):
+    """Schema for avatar response."""
+    success: bool
+    message: str
+    avatar_url: Optional[str] = None
+    avatar_config: Optional[AvatarConfig] = None
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "success": True,
+                "message": "Avatar updated successfully",
+                "avatar_url": "https://api.dicebear.com/7.x/open-peeps/svg?seed=user123_avatar",
+                "avatar_config": {
+                    "style": "open-peeps", 
+                    "seed": "user123_avatar",
+                    "options": {}
+                }
+            }
+        } 
+
+class ProfileUpdate(BaseModel):
+    """Schema for profile update requests."""
+    name: Optional[str] = None
+    profile_picture: Optional[str] = None
+    avatar: Optional[str] = None  # Legacy support for frontend compatibility 

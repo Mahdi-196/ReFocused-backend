@@ -21,7 +21,7 @@ from app.core.security import log_security_event
 from app.core.auth import get_current_user, jwt_required, oauth2_scheme
 from app.db.database import get_db
 from app.db.models import User, Goal2Week, GoalLongTerm, Habit, MoodEntry
-from app.schemas.user import UserResponse, UserProfile, UserUpdate, AccountDeleteRequest
+from app.schemas.user import UserResponse, UserProfile, UserUpdate, AccountDeleteRequest, AvatarUpdateRequest, AvatarResponse, AvatarConfig
 from datetime import date
 from app.core.security import verify_password
 from app.crud.activity import crud_activity
@@ -83,7 +83,7 @@ async def update_user_profile(
 ) -> UserProfile:
     """
     Update current user profile information.
-    Supports updating name and profile_picture fields.
+    Supports updating name, profile_picture, and avatar fields.
     Uses standard JWT authentication (consistent with other endpoints).
     """
     
@@ -95,9 +95,17 @@ async def update_user_profile(
         current_user.name = profile_data.name
         updated_fields.append("name")
         
+    # Handle both profile_picture and avatar fields (for frontend compatibility)
+    avatar_url = None
     if profile_data.profile_picture is not None:
-        current_user.profile_picture = profile_data.profile_picture
+        avatar_url = profile_data.profile_picture
         updated_fields.append("profile_picture")
+    elif profile_data.avatar is not None:
+        avatar_url = profile_data.avatar
+        updated_fields.append("avatar")
+    
+    if avatar_url is not None:
+        current_user.profile_picture = avatar_url
     
     # Save changes to database
     await db.commit()
@@ -134,6 +142,176 @@ async def update_user_profile_put(
     Uses standard JWT authentication (consistent with other endpoints).
     """
     return await update_user_profile(profile_data, current_user, db)
+
+
+@router.get("/avatar", response_model=AvatarResponse)
+async def get_user_avatar(
+    current_user: User = Depends(get_current_user)
+) -> AvatarResponse:
+    """
+    Get current user's avatar configuration.
+    Returns the avatar URL and attempts to parse configuration from the URL.
+    """
+    try:
+        if not current_user.profile_picture:
+            return AvatarResponse(
+                success=True,
+                message="No avatar configured",
+                avatar_url=None,
+                avatar_config=None
+            )
+        
+        # Try to parse avatar configuration from the URL
+        avatar_config = _parse_avatar_from_url(current_user.profile_picture)
+        
+        return AvatarResponse(
+            success=True,
+            message="Avatar retrieved successfully",
+            avatar_url=current_user.profile_picture,
+            avatar_config=avatar_config
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to retrieve avatar for user {current_user.id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve avatar"
+        )
+
+@router.put("/avatar", response_model=AvatarResponse)
+async def update_user_avatar(
+    avatar_data: AvatarUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> AvatarResponse:
+    """
+    Update user's avatar configuration and profile picture.
+    Supports all avatar styles: Open Peeps, Adventurer, Lorelei, Croodles, 
+    Notionists, Pixel Art, RoboHash Robots, RoboHash Monsters.
+    """
+    try:
+        # Generate avatar URL based on style and configuration
+        avatar_url = _generate_avatar_url(avatar_data.avatar_config)
+        
+        # Store the avatar URL in the user's profile_picture field
+        current_user.profile_picture = avatar_url
+        
+        # Commit changes to database
+        await db.commit()
+        await db.refresh(current_user)
+        
+        # Log avatar update for security tracking
+        log_security_event(
+            event_type="avatar_update",
+            details={
+                "avatar_style": avatar_data.avatar_config.style,
+                "avatar_seed": avatar_data.avatar_config.seed
+            },
+            level="info",
+            user_id=current_user.id
+        )
+        
+        return AvatarResponse(
+            success=True,
+            message="Avatar updated successfully",
+            avatar_url=avatar_url,
+            avatar_config=avatar_data.avatar_config
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to update avatar for user {current_user.id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update avatar"
+        )
+
+def _parse_avatar_from_url(url: str) -> Optional[AvatarConfig]:
+    """
+    Parse avatar configuration from DiceBear URL.
+    Best effort parsing - returns None if URL format is unexpected.
+    """
+    try:
+        from urllib.parse import urlparse, parse_qs
+        
+        parsed = urlparse(url)
+        
+        # Extract style from path (e.g., /7.x/open-peeps/svg -> open-peeps)
+        path_parts = parsed.path.strip('/').split('/')
+        if len(path_parts) >= 3 and path_parts[0] == '7.x':
+            dicebear_style = path_parts[1]
+            
+            # Reverse map DiceBear style to frontend style
+            reverse_style_mapping = {
+                "open-peeps": "open-peeps",
+                "adventurer": "adventurer", 
+                "lorelei": "lorelei",
+                "croodles": "croodles",
+                "notionists": "notionists",
+                "pixel-art": "pixel-art",
+                "bottts": "robohash-robots",
+                "monsters": "robohash-monsters"
+            }
+            
+            frontend_style = reverse_style_mapping.get(dicebear_style, dicebear_style)
+            
+            # Parse query parameters
+            query_params = parse_qs(parsed.query)
+            seed = query_params.get('seed', [''])[0]
+            
+            # Build options from remaining parameters
+            options = {}
+            for key, values in query_params.items():
+                if key != 'seed' and values:
+                    options[key] = values[0]
+            
+            return AvatarConfig(
+                style=frontend_style,
+                seed=seed,
+                options=options if options else None
+            )
+    except Exception:
+        # If parsing fails, return None
+        pass
+    
+    return None
+
+def _generate_avatar_url(avatar_config: AvatarConfig) -> str:
+    """
+    Generate avatar URL based on configuration.
+    Maps frontend avatar styles to DiceBear API endpoints.
+    """
+    # Map frontend style names to DiceBear API styles
+    style_mapping = {
+        "open-peeps": "open-peeps",
+        "adventurer": "adventurer", 
+        "lorelei": "lorelei",
+        "croodles": "croodles",
+        "notionists": "notionists",
+        "pixel-art": "pixel-art",
+        "robohash-robots": "bottts",  # RoboHash robots -> bottts
+        "robohash-monsters": "monsters"  # RoboHash monsters -> monsters
+    }
+    
+    # Get DiceBear style name
+    dicebear_style = style_mapping.get(avatar_config.style.lower(), "open-peeps")
+    
+    # Base URL for DiceBear API v7
+    base_url = f"https://api.dicebear.com/7.x/{dicebear_style}/svg"
+    
+    # Build query parameters
+    params = [f"seed={avatar_config.seed}"]
+    
+    # Add any additional options
+    if avatar_config.options:
+        for key, value in avatar_config.options.items():
+            if value is not None:
+                params.append(f"{key}={value}")
+    
+    # Construct final URL
+    if params:
+        return f"{base_url}?{'&'.join(params)}"
+    else:
+        return f"{base_url}?seed={avatar_config.seed}"
 
 
 @router.get("/stats", response_model=UserStats)

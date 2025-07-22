@@ -59,6 +59,7 @@ class UserProfile(BaseModel):
 class ProfileUpdate(BaseModel):
     name: Optional[str] = None
     profile_picture: Optional[str] = None
+    avatar: Optional[str] = None  # Legacy support for frontend compatibility
 
 
 class EnhancedLoginRequest(BaseModel):
@@ -600,16 +601,30 @@ async def update_user_profile(
     # Update user fields
     if profile_data.name is not None:
         current_user.name = profile_data.name
+    
+    # Handle both profile_picture and avatar fields (for frontend compatibility)
+    avatar_url = None
     if profile_data.profile_picture is not None:
-        current_user.profile_picture = profile_data.profile_picture
+        avatar_url = profile_data.profile_picture
+    elif profile_data.avatar is not None:
+        avatar_url = profile_data.avatar
+    
+    if avatar_url is not None:
+        current_user.profile_picture = avatar_url
     
     await db.commit()
     await db.refresh(current_user)
     
     # Log profile update
+    updated_fields = []
+    if profile_data.name is not None:
+        updated_fields.append("name")
+    if avatar_url is not None:
+        updated_fields.append("profile_picture")
+        
     log_security_event(
         event_type="profile_update",
-        details={"updated_fields": [k for k, v in profile_data.dict().items() if v is not None]},
+        details={"updated_fields": updated_fields},
         level="info",
         user_id=current_user.id
     )
