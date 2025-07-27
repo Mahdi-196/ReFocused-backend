@@ -9,13 +9,14 @@ import logging
 
 from app.db.models import (
     User, CalendarEntry, CalendarHabitCompletion, CalendarMoodEntry,
-    Habit, HabitCompletion, MoodEntry
+    Habit, HabitCompletion, MoodEntry, Gratitude
 )
 from app.schemas.calendar import (
     CalendarEntryCreate, CalendarEntryUpdate,
     CalendarHabitCompletionCreate, CalendarMoodEntryCreate
 )
 from app.services.time_service import TimeService
+from app.crud.journal import GratitudeCRUD
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,27 @@ class CalendarCRUD:
             
             result = await db.execute(query)
             entries = list(result.scalars().all())
+            
+            # Get gratitude entries for the date range
+            try:
+                gratitude_entries, _ = await GratitudeCRUD.get_user_gratitude(
+                    db, user.id, 
+                    start_date=start_date, 
+                    end_date=end_date,
+                    limit=1000
+                )
+                gratitude_by_date = {}
+                for gratitude in gratitude_entries:
+                    if gratitude.date not in gratitude_by_date:
+                        gratitude_by_date[gratitude.date] = []
+                    gratitude_by_date[gratitude.date].append(gratitude)
+            except Exception as e:
+                logger.error(f"Error fetching gratitude entries for user {user.id}: {str(e)}")
+                gratitude_by_date = {}
+            
+            # Add gratitude data to calendar entries
+            for entry in entries:
+                entry.gratitudes = gratitude_by_date.get(entry.date, [])
             
             # Update lock status for all entries
             await self._update_lock_status(db, entries, user)

@@ -42,13 +42,21 @@ class MoodCRUD:
         elif month:
             try:
                 year, month_num = map(int, month.split('-'))
+                # Calculate start and end dates for the month
+                start_date = date(year, month_num, 1)
+                if month_num == 12:
+                    end_date = date(year + 1, 1, 1) - timedelta(days=1)
+                else:
+                    end_date = date(year, month_num + 1, 1) - timedelta(days=1)
+                
                 subquery = subquery.where(
                     and_(
-                        extract('year', MoodEntry.entry_date) == year,
-                        extract('month', MoodEntry.entry_date) == month_num
+                        MoodEntry.entry_date >= start_date,
+                        MoodEntry.entry_date <= end_date
                     )
                 )
             except (ValueError, AttributeError):
+                # If month parsing fails, don't apply any filter
                 pass
         
         subquery = subquery.subquery()

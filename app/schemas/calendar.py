@@ -1,6 +1,7 @@
 from typing import Optional, List
 from pydantic import BaseModel, Field, validator
 from datetime import datetime, date
+from .journal import Gratitude  # Add gratitude import
 
 # Calendar Habit Completion schemas
 class CalendarHabitCompletionBase(BaseModel):
@@ -80,6 +81,7 @@ class CalendarEntryResponse(CalendarEntryBase):
     is_locked: bool = False
     habit_completions: List[CalendarHabitCompletionResponse] = []
     mood_entry: Optional[CalendarMoodEntryResponse] = None
+    gratitudes: List[Gratitude] = []  # Add gratitudes field
     created_at: datetime
     updated_at: datetime
     
