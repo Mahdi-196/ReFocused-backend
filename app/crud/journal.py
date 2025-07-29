@@ -10,6 +10,7 @@ import base64
 import hashlib
 
 from app.db.models import JournalCollection, JournalEntry, Gratitude, User
+from app.services.time_service import TimeService
 from app.schemas.journal import (
     JournalCollectionCreate, JournalCollectionUpdate,
     JournalEntryCreate, JournalEntryUpdate,
@@ -465,13 +466,17 @@ class GratitudeCRUD:
     """CRUD operations for gratitude entries"""
     
     @staticmethod
-    async def create(db: AsyncSession, gratitude: GratitudeCreate, user_id: int) -> Gratitude:
+    async def create(db: AsyncSession, gratitude: GratitudeCreate, user: User) -> Gratitude:
         """Create a new gratitude entry"""
-        # Set date to today if not provided
-        entry_date = gratitude.date if gratitude.date else date.today()
+        # Set date to today if not provided - use user's current date from TimeService
+        if gratitude.date:
+            entry_date = gratitude.date
+        else:
+            time_service = TimeService()
+            entry_date = time_service.get_user_current_date(user)
         
         db_gratitude = Gratitude(
-            user_id=user_id,
+            user_id=user.id,
             text=gratitude.text.strip() if gratitude.text else "",
             date=entry_date
         )

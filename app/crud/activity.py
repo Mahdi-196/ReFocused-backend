@@ -1,13 +1,14 @@
 from typing import Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from datetime import datetime
 
 from app.db.models import (
     User, Goal2Week, GoalLongTerm, Habit, HabitCompletion, HabitStreak,
     MoodEntry, PomodoroSettings, StudySet, Flashcard, Mantra,
     JournalCollection, JournalEntry, Gratitude, UserStatistics,
-    CalendarEntry, CalendarHabitCompletion, CalendarMoodEntry, QuickAccess
+    CalendarEntry, CalendarHabitCompletion, CalendarMoodEntry, QuickAccess,
+    UserDailyStreak
 )
 
 
@@ -125,6 +126,12 @@ class CRUDActivity:
             .where(CalendarEntry.user_id == user_id)
         )
         counts["calendar_mood_entries"] = calendar_mood_entries_count.scalar() or 0
+        
+        # Daily streak data
+        daily_streaks_count = await db.execute(
+            select(func.count(UserDailyStreak.id)).where(UserDailyStreak.user_id == user_id)
+        )
+        counts["daily_streaks"] = daily_streaks_count.scalar() or 0
         
         # Calculate total records
         counts["total_records"] = sum(counts.values())
@@ -262,6 +269,23 @@ class CRUDActivity:
             
             await db.execute(
                 delete(PomodoroSettings).where(PomodoroSettings.user_id == user_id)
+            )
+            
+            # Delete daily streak data
+            await db.execute(
+                delete(UserDailyStreak).where(UserDailyStreak.user_id == user_id)
+            )
+            
+            # Reset user's streak data in users table
+            await db.execute(
+                update(User)
+                .where(User.id == user_id)
+                .values(
+                    current_streak=0,
+                    longest_streak=0,
+                    last_interaction_date=None,
+                    streak_updated_at=datetime.utcnow()
+                )
             )
             
             # Commit all deletions

@@ -398,7 +398,7 @@ async def create_gratitude(
             )
         
         # Create the gratitude entry
-        result = await GratitudeCRUD.create(db, gratitude, current_user.id)
+        result = await GratitudeCRUD.create(db, gratitude, current_user)
         
         # Log successful creation in development
         if settings.is_development():

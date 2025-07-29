@@ -10,8 +10,8 @@ def calculate_2week_expiration(created_at: datetime) -> datetime:
     Calculate the expiration timestamp for a 2-week goal based on creation date.
     
     Rules:
-    - If created between 1st-14th of month: expires at end of day (23:59:59 UTC) on 15th of same month
-    - If created from 15th-end of month: expires at end of day (23:59:59 UTC) on 1st of next month
+    - Goal expires exactly 14 days (2 weeks) from creation date
+    - Expires at end of day (23:59:59 UTC) on the 14th day after creation
     
     Args:
         created_at: The creation timestamp of the goal
@@ -25,30 +25,12 @@ def calculate_2week_expiration(created_at: datetime) -> datetime:
     elif created_at.tzinfo != timezone.utc:
         created_at = created_at.astimezone(timezone.utc)
     
-    day = created_at.day
+    # Calculate expiration: 14 days from creation date
+    from datetime import timedelta
+    expires_date = created_at + timedelta(days=14)
     
-    if day <= 14:
-        # Expires at end of day on 15th of same month
-        expires_date = created_at.replace(day=15, hour=23, minute=59, second=59, microsecond=999999)
-    else:
-        # Expires at end of day on 1st of next month
-        if created_at.month == 12:
-            # Handle year rollover
-            next_year = created_at.year + 1
-            next_month = 1
-        else:
-            next_year = created_at.year
-            next_month = created_at.month + 1
-        
-        expires_date = created_at.replace(
-            year=next_year,
-            month=next_month,
-            day=1,
-            hour=23,
-            minute=59,
-            second=59,
-            microsecond=999999
-        )
+    # Set to end of day (23:59:59.999999)
+    expires_date = expires_date.replace(hour=23, minute=59, second=59, microsecond=999999)
     
     return expires_date
 

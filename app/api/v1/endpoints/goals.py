@@ -1,8 +1,8 @@
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Dict
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func, or_, desc
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
 
 from app.core.auth import get_current_user
 from app.db.database import get_db
@@ -23,6 +23,7 @@ from app.schemas.goal import (
 )
 from app.core.security import log_security_event
 from app.utils.goal_utils import calculate_2week_expiration, is_goal_expired
+from app.services.time_service import TimeService
 
 router = APIRouter()
 
@@ -78,13 +79,65 @@ async def get_goals(
     include_expired: bool = Query(False, description="Include expired 2-week goals"),
     include_completed: Optional[bool] = Query(None, description="Include completed goals (overrides default 24h behavior)"),
     completed_within_hours: Optional[int] = Query(None, ge=1, le=720, description="Include goals completed within X hours"),
+    # Date-based filtering parameters (respects mock datetime if not provided)
+    date: Optional[str] = Query(None, description="Get goals for specific date (YYYY-MM-DD). If not provided, returns all goals."),
+    start_date: Optional[str] = Query(None, description="Start date for range filtering (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date for range filtering (YYYY-MM-DD)"),
+    # Pagination parameters
+    limit: Optional[int] = Query(None, ge=1, le=100, description="Maximum goals to return"),
+    offset: Optional[int] = Query(None, ge=0, description="Pagination offset"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get all goals for the current user with optional filters, including 24-hour completion visibility."""
+    """Get all goals for the current user with optional filters, including date-based filtering and calendar integration.
+    
+    When no date parameters are provided, returns all goals for the user.
+    When date parameter is provided, returns only goals for that specific date.
+    """
     
     goals = []
-    current_time = datetime.now(timezone.utc)
+    current_time = TimeService.get_base_utc_time(current_user)
+    
+    # Parse date parameters (respects mock datetime if not provided)
+    target_date = None
+    start_date_obj = None
+    end_date_obj = None
+    
+    if date:
+        try:
+            target_date = TimeService.parse_date_string(date)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid date format. Use YYYY-MM-DD"
+            )
+    # Note: If no date parameter is provided, target_date remains None
+    # This means we get ALL goals, not just goals for the current date
+    
+    if start_date:
+        try:
+            start_date_obj = TimeService.parse_date_string(start_date)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid start_date format. Use YYYY-MM-DD"
+            )
+    
+    if end_date:
+        try:
+            end_date_obj = TimeService.parse_date_string(end_date)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid end_date format. Use YYYY-MM-DD"
+            )
+    
+    # Validate date range
+    if start_date_obj and end_date_obj and start_date_obj > end_date_obj:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="start_date must be before or equal to end_date"
+        )
     
     # Determine completion visibility logic
     hours_cutoff = completed_within_hours if completed_within_hours is not None else 24
@@ -93,6 +146,44 @@ async def get_goals(
     # Query 2-week goals if not filtering by long_term duration
     if duration != GoalDurationEnum.long_term:
         query_2week = select(Goal2Week).where(Goal2Week.user_id == current_user.id)
+        
+        # Apply date-based filtering
+        if target_date:
+            # Get goals for specific date (created on that date or completed on that date)
+            start_of_day = TimeService.start_of_day_user_tz(current_user, target_date)
+            end_of_day = TimeService.end_of_day_user_tz(current_user, target_date)
+            
+            query_2week = query_2week.where(
+                or_(
+                    and_(
+                        Goal2Week.created_at >= start_of_day,
+                        Goal2Week.created_at <= end_of_day
+                    ),
+                    and_(
+                        Goal2Week.is_completed == True,
+                        Goal2Week.completed_at >= start_of_day,
+                        Goal2Week.completed_at <= end_of_day
+                    )
+                )
+            )
+        elif start_date_obj and end_date_obj:
+            # Get goals for date range
+            start_of_range = TimeService.start_of_day_user_tz(current_user, start_date_obj)
+            end_of_range = TimeService.end_of_day_user_tz(current_user, end_date_obj)
+            
+            query_2week = query_2week.where(
+                or_(
+                    and_(
+                        Goal2Week.created_at >= start_of_range,
+                        Goal2Week.created_at <= end_of_range
+                    ),
+                    and_(
+                        Goal2Week.is_completed == True,
+                        Goal2Week.completed_at >= start_of_range,
+                        Goal2Week.completed_at <= end_of_range
+                    )
+                )
+            )
         
         # Handle completion filtering with 24-hour visibility
         if completed is not None:
@@ -129,6 +220,9 @@ async def get_goals(
         if not include_expired:
             query_2week = query_2week.where(Goal2Week.expires_at > current_time)
         
+        # Add ordering for consistent pagination
+        query_2week = query_2week.order_by(desc(Goal2Week.created_at))
+        
         result_2week = await db.execute(query_2week)
         goals_2week = result_2week.scalars().all()
         goals.extend(goals_2week)
@@ -136,6 +230,44 @@ async def get_goals(
     # Query long-term goals if not filtering by 2_week duration
     if duration != GoalDurationEnum.two_week:
         query_longterm = select(GoalLongTerm).where(GoalLongTerm.user_id == current_user.id)
+        
+        # Apply date-based filtering for long-term goals
+        if target_date:
+            # Get goals for specific date (created on that date or completed on that date)
+            start_of_day = TimeService.start_of_day_user_tz(current_user, target_date)
+            end_of_day = TimeService.end_of_day_user_tz(current_user, target_date)
+            
+            query_longterm = query_longterm.where(
+                or_(
+                    and_(
+                        GoalLongTerm.created_at >= start_of_day,
+                        GoalLongTerm.created_at <= end_of_day
+                    ),
+                    and_(
+                        GoalLongTerm.is_completed == True,
+                        GoalLongTerm.completed_at >= start_of_day,
+                        GoalLongTerm.completed_at <= end_of_day
+                    )
+                )
+            )
+        elif start_date_obj and end_date_obj:
+            # Get goals for date range
+            start_of_range = TimeService.start_of_day_user_tz(current_user, start_date_obj)
+            end_of_range = TimeService.end_of_day_user_tz(current_user, end_date_obj)
+            
+            query_longterm = query_longterm.where(
+                or_(
+                    and_(
+                        GoalLongTerm.created_at >= start_of_range,
+                        GoalLongTerm.created_at <= end_of_range
+                    ),
+                    and_(
+                        GoalLongTerm.is_completed == True,
+                        GoalLongTerm.completed_at >= start_of_range,
+                        GoalLongTerm.completed_at <= end_of_range
+                    )
+                )
+            )
         
         # Handle completion filtering with 24-hour visibility (same logic as 2-week)
         if completed is not None:
@@ -166,6 +298,9 @@ async def get_goals(
         if goal_type is not None:
             query_longterm = query_longterm.where(GoalLongTerm.goal_type == goal_type.value)
         
+        # Add ordering for consistent pagination
+        query_longterm = query_longterm.order_by(desc(GoalLongTerm.created_at))
+        
         result_longterm = await db.execute(query_longterm)
         goals_longterm = result_longterm.scalars().all()
         goals.extend(goals_longterm)
@@ -173,201 +308,313 @@ async def get_goals(
     # Sort by creation date, most recent first
     goals.sort(key=lambda g: g.created_at, reverse=True)
     
+    # Apply pagination
+    total_count = len(goals)
+    if limit is not None:
+        goals = goals[offset or 0:offset or 0 + limit]
+    elif offset is not None:
+        goals = goals[offset:]
+    
     # Convert to schema responses
-    return [goal_to_schema(goal) for goal in goals]
+    result_goals = [goal_to_schema(goal) for goal in goals]
+    
+    # Add response headers for client optimization
+    response.headers["X-Total-Count"] = str(total_count)
+    response.headers["X-Returned-Count"] = str(len(result_goals))
+    
+    return result_goals
 
 
-@router.post("", response_model=GoalSchema, status_code=status.HTTP_201_CREATED)
-async def create_goal(
-    goal_data: GoalCreate,
+@router.get("/today", response_model=List[GoalSchema])
+async def get_todays_goals(
     request: Request,
     response: Response,
+    include_completed: bool = Query(True, description="Include completed goals for today"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Create a new goal for the current user."""
+    """Get goals for today - optimized for daily dashboard (respects mock datetime)."""
     
-    # Prepare goal data
-    goal_dict = goal_data.dict()
+    # Get current date from TimeService (respects mock datetime)
+    current_date = TimeService.get_current_date_for_user(current_user)
     
-    # Set target_value based on goal_type if not provided
-    if goal_data.goal_type == GoalTypeEnum.percentage:
-        goal_dict["target_value"] = 100
-    elif goal_data.goal_type == GoalTypeEnum.checklist:
-        goal_dict["target_value"] = 1
-    # For counter type, target_value must be provided and validated by schema
+    goals = []
     
-    # Common fields
-    goal_dict.update({
-        "user_id": current_user.id,
-        "current_value": 0,
-        "is_completed": False,
-        "duration": goal_data.duration.value,
-        "goal_type": goal_data.goal_type.value
-    })
-    
-    try:
-        if goal_data.duration == GoalDurationEnum.two_week:
-            # Generate server-side creation timestamp
-            created_at = datetime.now(timezone.utc)
-            goal_dict["expires_at"] = calculate_2week_expiration(created_at)
-            
-            goal = Goal2Week(**goal_dict)
-            db.add(goal)
-            await db.commit()
-            await db.refresh(goal)
-            
-        else:  # long_term
-            goal = GoalLongTerm(**goal_dict)
-            db.add(goal)
-            await db.commit()
-            await db.refresh(goal)
-        
-        # Log security event
-        table_name = "goals_2_week" if goal_data.duration == GoalDurationEnum.two_week else "goals_long_term"
-        log_security_event(
-            event_type="goal_created",
-            details={
-                "goal_id": goal.id,
-                "name": goal.name,
-                "goal_type": goal.goal_type,
-                "duration": goal.duration,
-                "target_value": goal.target_value,
-                "table": table_name
-            },
-            level="info",
-            user_id=current_user.id
-        )
-        
-        return goal_to_schema(goal)
-        
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to create goal: {str(e)}"
-        )
-
-
-@router.get("/stats/summary", response_model=GoalStats)
-async def get_goal_stats(
-    request: Request,
-    response: Response,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Get goal statistics summary for the current user."""
-    
-    current_time = datetime.now(timezone.utc)
-    
-    # Get total goals from both tables
-    total_2week_result = await db.execute(
-        select(func.count(Goal2Week.id)).where(Goal2Week.user_id == current_user.id)
-    )
-    total_2week = total_2week_result.scalar() or 0
-    
-    total_longterm_result = await db.execute(
-        select(func.count(GoalLongTerm.id)).where(GoalLongTerm.user_id == current_user.id)
-    )
-    total_longterm = total_longterm_result.scalar() or 0
-    
-    total_goals = total_2week + total_longterm
-    
-    # Get completed goals from both tables
-    completed_2week_result = await db.execute(
-        select(func.count(Goal2Week.id)).where(
-            and_(Goal2Week.user_id == current_user.id, Goal2Week.is_completed == True)
-        )
-    )
-    completed_2week = completed_2week_result.scalar() or 0
-    
-    completed_longterm_result = await db.execute(
-        select(func.count(GoalLongTerm.id)).where(
-            and_(GoalLongTerm.user_id == current_user.id, GoalLongTerm.is_completed == True)
-        )
-    )
-    completed_longterm = completed_longterm_result.scalar() or 0
-    
-    completed_goals = completed_2week + completed_longterm
-    
-    # Get goals by type from both tables
-    # 2-week goals by type
-    percentage_2week_result = await db.execute(
-        select(func.count(Goal2Week.id)).where(
-            and_(Goal2Week.user_id == current_user.id, Goal2Week.goal_type == "percentage")
-        )
-    )
-    percentage_2week = percentage_2week_result.scalar() or 0
-    
-    counter_2week_result = await db.execute(
-        select(func.count(Goal2Week.id)).where(
-            and_(Goal2Week.user_id == current_user.id, Goal2Week.goal_type == "counter")
-        )
-    )
-    counter_2week = counter_2week_result.scalar() or 0
-    
-    checklist_2week_result = await db.execute(
-        select(func.count(Goal2Week.id)).where(
-            and_(Goal2Week.user_id == current_user.id, Goal2Week.goal_type == "checklist")
-        )
-    )
-    checklist_2week = checklist_2week_result.scalar() or 0
-    
-    # Long-term goals by type
-    percentage_longterm_result = await db.execute(
-        select(func.count(GoalLongTerm.id)).where(
-            and_(GoalLongTerm.user_id == current_user.id, GoalLongTerm.goal_type == "percentage")
-        )
-    )
-    percentage_longterm = percentage_longterm_result.scalar() or 0
-    
-    counter_longterm_result = await db.execute(
-        select(func.count(GoalLongTerm.id)).where(
-            and_(GoalLongTerm.user_id == current_user.id, GoalLongTerm.goal_type == "counter")
-        )
-    )
-    counter_longterm = counter_longterm_result.scalar() or 0
-    
-    checklist_longterm_result = await db.execute(
-        select(func.count(GoalLongTerm.id)).where(
-            and_(GoalLongTerm.user_id == current_user.id, GoalLongTerm.goal_type == "checklist")
-        )
-    )
-    checklist_longterm = checklist_longterm_result.scalar() or 0
-    
-    # Combine totals by type
-    percentage_goals = percentage_2week + percentage_longterm
-    counter_goals = counter_2week + counter_longterm
-    checklist_goals = checklist_2week + checklist_longterm
-    
-    # Get active 2-week goals (non-expired, non-completed)
-    active_2week_result = await db.execute(
-        select(func.count(Goal2Week.id)).where(
-            and_(
-                Goal2Week.user_id == current_user.id,
-                Goal2Week.is_completed == False,
-                Goal2Week.expires_at > current_time
+    # Query 2-week goals for today
+    query_2week = select(Goal2Week).where(
+        and_(
+            Goal2Week.user_id == current_user.id,
+            or_(
+                and_(
+                    func.date(Goal2Week.created_at) == current_date
+                ),
+                and_(
+                    Goal2Week.is_completed == True,
+                    func.date(Goal2Week.completed_at) == current_date
+                )
             )
         )
     )
-    active_2_week_goals = active_2week_result.scalar() or 0
     
-    # Long term goals (all of them, since they don't expire)
-    long_term_goals = total_longterm
+    if not include_completed:
+        query_2week = query_2week.where(Goal2Week.is_completed == False)
     
-    # Calculate completion rate
-    completion_rate = (completed_goals / total_goals * 100) if total_goals > 0 else 0.0
+    result_2week = await db.execute(query_2week)
+    goals_2week = result_2week.scalars().all()
+    goals.extend(goals_2week)
     
-    return GoalStats(
-        total_goals=total_goals,
-        completed_goals=completed_goals,
-        percentage_goals=percentage_goals,
-        counter_goals=counter_goals,
-        checklist_goals=checklist_goals,
-        active_2_week_goals=active_2_week_goals,
-        long_term_goals=long_term_goals,
-        completion_rate=round(completion_rate, 1)
+    # Query long-term goals for today
+    query_longterm = select(GoalLongTerm).where(
+        and_(
+            GoalLongTerm.user_id == current_user.id,
+            or_(
+                and_(
+                    func.date(GoalLongTerm.created_at) == current_date
+                ),
+                and_(
+                    GoalLongTerm.is_completed == True,
+                    func.date(GoalLongTerm.completed_at) == current_date
+                )
+            )
+        )
     )
+    
+    if not include_completed:
+        query_longterm = query_longterm.where(GoalLongTerm.is_completed == False)
+    
+    result_longterm = await db.execute(query_longterm)
+    goals_longterm = result_longterm.scalars().all()
+    goals.extend(goals_longterm)
+    
+    # Sort by creation date, most recent first
+    goals.sort(key=lambda g: g.created_at, reverse=True)
+    
+    # Convert to schema responses
+    result_goals = [goal_to_schema(goal) for goal in goals]
+    
+    # Add response headers
+    response.headers["X-Total-Count"] = str(len(result_goals))
+    response.headers["X-Target-Date"] = current_date.strftime("%Y-%m-%d")
+    response.headers["X-Is-Mock-Date"] = str(TimeService.is_mock_enabled(current_user))
+    
+    return result_goals
+
+
+@router.get("/calendar/{target_date}", response_model=List[GoalSchema])
+async def get_goals_for_date(
+    target_date: str,
+    request: Request,
+    response: Response,
+    include_completed: bool = Query(True, description="Include completed goals for the date"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get goals for a specific date - optimized for calendar integration."""
+    
+    try:
+        # Parse and validate date
+        date_obj = TimeService.parse_date_string(target_date)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid date format. Use YYYY-MM-DD"
+        )
+    
+    goals = []
+    
+    # Query 2-week goals for the specific date
+    query_2week = select(Goal2Week).where(
+        and_(
+            Goal2Week.user_id == current_user.id,
+            or_(
+                and_(
+                    func.date(Goal2Week.created_at) == date_obj
+                ),
+                and_(
+                    Goal2Week.is_completed == True,
+                    func.date(Goal2Week.completed_at) == date_obj
+                )
+            )
+        )
+    )
+    
+    if not include_completed:
+        query_2week = query_2week.where(Goal2Week.is_completed == False)
+    
+    result_2week = await db.execute(query_2week)
+    goals_2week = result_2week.scalars().all()
+    goals.extend(goals_2week)
+    
+    # Query long-term goals for the specific date
+    query_longterm = select(GoalLongTerm).where(
+        and_(
+            GoalLongTerm.user_id == current_user.id,
+            or_(
+                and_(
+                    func.date(GoalLongTerm.created_at) == date_obj
+                ),
+                and_(
+                    GoalLongTerm.is_completed == True,
+                    func.date(GoalLongTerm.completed_at) == date_obj
+                )
+            )
+        )
+    )
+    
+    if not include_completed:
+        query_longterm = query_longterm.where(GoalLongTerm.is_completed == False)
+    
+    result_longterm = await db.execute(query_longterm)
+    goals_longterm = result_longterm.scalars().all()
+    goals.extend(goals_longterm)
+    
+    # Sort by creation date, most recent first
+    goals.sort(key=lambda g: g.created_at, reverse=True)
+    
+    # Convert to schema responses
+    result_goals = [goal_to_schema(goal) for goal in goals]
+    
+    # Add response headers
+    response.headers["X-Total-Count"] = str(len(result_goals))
+    response.headers["X-Target-Date"] = target_date
+    
+    return result_goals
+
+
+@router.get("/monthly/{year}/{month}", response_model=List[GoalSchema])
+async def get_monthly_goals(
+    year: int,
+    month: int,
+    request: Request,
+    response: Response,
+    include_completed: bool = Query(True, description="Include completed goals"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get goals for a full month - optimized for calendar views."""
+    
+    try:
+        # Validate year and month
+        if year < 2020 or year > 2030:
+            raise ValueError("Year must be between 2020 and 2030")
+        if month < 1 or month > 12:
+            raise ValueError("Month must be between 1 and 12")
+        
+        # Create date range for the month
+        start_date = date(year, month, 1)
+        if month == 12:
+            end_date = date(year + 1, 1, 1) - timedelta(days=1)
+        else:
+            end_date = date(year, month + 1, 1) - timedelta(days=1)
+            
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    
+    goals = []
+    
+    # Query 2-week goals for the month
+    query_2week = select(Goal2Week).where(
+        and_(
+            Goal2Week.user_id == current_user.id,
+            or_(
+                and_(
+                    func.date(Goal2Week.created_at) >= start_date,
+                    func.date(Goal2Week.created_at) <= end_date
+                ),
+                and_(
+                    Goal2Week.is_completed == True,
+                    func.date(Goal2Week.completed_at) >= start_date,
+                    func.date(Goal2Week.completed_at) <= end_date
+                )
+            )
+        )
+    )
+    
+    if not include_completed:
+        query_2week = query_2week.where(Goal2Week.is_completed == False)
+    
+    result_2week = await db.execute(query_2week)
+    goals_2week = result_2week.scalars().all()
+    goals.extend(goals_2week)
+    
+    # Query long-term goals for the month
+    query_longterm = select(GoalLongTerm).where(
+        and_(
+            GoalLongTerm.user_id == current_user.id,
+            or_(
+                and_(
+                    func.date(GoalLongTerm.created_at) >= start_date,
+                    func.date(GoalLongTerm.created_at) <= end_date
+                ),
+                and_(
+                    GoalLongTerm.is_completed == True,
+                    func.date(GoalLongTerm.completed_at) >= start_date,
+                    func.date(GoalLongTerm.completed_at) <= end_date
+                )
+            )
+        )
+    )
+    
+    if not include_completed:
+        query_longterm = query_longterm.where(GoalLongTerm.is_completed == False)
+    
+    result_longterm = await db.execute(query_longterm)
+    goals_longterm = result_longterm.scalars().all()
+    goals.extend(goals_longterm)
+    
+    # Sort by creation date, most recent first
+    goals.sort(key=lambda g: g.created_at, reverse=True)
+    
+    # Convert to schema responses
+    result_goals = [goal_to_schema(goal) for goal in goals]
+    
+    # Add response headers
+    response.headers["X-Total-Count"] = str(len(result_goals))
+    response.headers["X-Month-Year"] = f"{year}-{month:02d}"
+    
+    return result_goals
+
+
+@router.get("/history/periods", response_model=Dict[str, GoalsHistoryResponse])
+async def get_goals_history_periods(
+    request: Request,
+    response: Response,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get goal history for multiple periods (30, 60, 90 days) in a single request."""
+    
+    periods = {
+        "30_days": 30,
+        "60_days": 60,
+        "90_days": 90
+    }
+    
+    results = {}
+    
+    for period_name, days_back in periods.items():
+        try:
+            history_response = await _get_goals_history_logic(
+                db=db,
+                user_id=current_user.id,
+                days_back=days_back,
+                limit=None,
+                offset=None,
+                current_user=current_user
+            )
+            results[period_name] = history_response
+        except Exception as e:
+            # Log error but continue with other periods
+            results[period_name] = GoalsHistoryResponse(
+                goals=[],
+                total_count=0,
+                date_range={"start": "", "end": ""}
+            )
+    
+    return results
 
 
 async def _get_goals_history_logic(
@@ -376,6 +623,7 @@ async def _get_goals_history_logic(
     days_back: int,
     limit: Optional[int],
     offset: Optional[int],
+    current_user: User,
     goal_type: Optional[GoalTypeEnum] = None,
     duration: Optional[GoalDurationEnum] = None
 ) -> GoalsHistoryResponse:
@@ -385,7 +633,7 @@ async def _get_goals_history_logic(
     Fetches completed goals from both Goal2Week and GoalLongTerm tables
     within the specified date range.
     """
-    current_time = datetime.now(timezone.utc)
+    current_time = TimeService.get_base_utc_time(current_user)
     start_date = current_time - timedelta(days=days_back)
     
     goals = []
@@ -501,6 +749,7 @@ async def get_goals_history(
             days_back=days_back,
             limit=limit,
             offset=offset,
+            current_user=current_user,
             goal_type=goal_type,
             duration=duration
         )
@@ -522,7 +771,7 @@ async def get_completion_stats(
 ):
     """Get completion statistics for the specified time period."""
     
-    current_time = datetime.now(timezone.utc)
+    current_time = TimeService.get_base_utc_time(current_user)
     start_date = current_time - timedelta(days=days_back)
     
     # Get completed goals from both tables within the time period
@@ -748,7 +997,7 @@ async def update_goal_progress(
     
     # Set completed_at timestamp when goal is newly completed
     if goal.is_completed and not was_completed:
-        goal.completed_at = datetime.now(timezone.utc)
+        goal.completed_at = TimeService.get_base_utc_time(current_user)
         
         # Log goal completion event with calculated days to complete
         completion_days = (goal.completed_at - goal.created_at).days
@@ -829,4 +1078,202 @@ async def delete_goal(
         details=goal_info,
         level="info",
         user_id=current_user.id
-    ) 
+    )
+
+
+@router.post("", response_model=GoalSchema, status_code=status.HTTP_201_CREATED)
+async def create_goal(
+    goal_data: GoalCreate,
+    request: Request,
+    response: Response,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Create a new goal for the current user."""
+    
+    # Prepare goal data
+    goal_dict = goal_data.dict()
+    
+    # Set target_value based on goal_type if not provided
+    if goal_data.goal_type == GoalTypeEnum.percentage:
+        goal_dict["target_value"] = 100
+    elif goal_data.goal_type == GoalTypeEnum.checklist:
+        goal_dict["target_value"] = 1
+    # For counter type, target_value must be provided and validated by schema
+    
+    # Common fields
+    goal_dict.update({
+        "user_id": current_user.id,
+        "current_value": 0,
+        "is_completed": False,
+        "duration": goal_data.duration.value,
+        "goal_type": goal_data.goal_type.value
+    })
+    
+    try:
+        if goal_data.duration == GoalDurationEnum.two_week:
+            # Generate server-side creation timestamp (respects mock datetime)
+            created_at = TimeService.get_base_utc_time(current_user)
+            goal_dict["created_at"] = created_at
+            goal_dict["expires_at"] = calculate_2week_expiration(created_at)
+            
+            goal = Goal2Week(**goal_dict)
+            db.add(goal)
+            await db.commit()
+            await db.refresh(goal)
+            
+        else:  # long_term
+            # Generate server-side creation timestamp (respects mock datetime)
+            created_at = TimeService.get_base_utc_time(current_user)
+            goal_dict["created_at"] = created_at
+            
+            goal = GoalLongTerm(**goal_dict)
+            db.add(goal)
+            await db.commit()
+            await db.refresh(goal)
+        
+        # Log security event
+        table_name = "goals_2_week" if goal_data.duration == GoalDurationEnum.two_week else "goals_long_term"
+        log_security_event(
+            event_type="goal_created",
+            details={
+                "goal_id": goal.id,
+                "name": goal.name,
+                "goal_type": goal.goal_type,
+                "duration": goal.duration,
+                "target_value": goal.target_value,
+                "table": table_name
+            },
+            level="info",
+            user_id=current_user.id
+        )
+        
+        return goal_to_schema(goal)
+        
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to create goal: {str(e)}"
+        )
+
+
+@router.get("/stats/summary", response_model=GoalStats)
+async def get_goal_stats(
+    request: Request,
+    response: Response,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get goal statistics summary for the current user."""
+    
+    current_time = TimeService.get_base_utc_time(current_user)
+    
+    # Get total goals from both tables
+    total_2week_result = await db.execute(
+        select(func.count(Goal2Week.id)).where(Goal2Week.user_id == current_user.id)
+    )
+    total_2week = total_2week_result.scalar() or 0
+    
+    total_longterm_result = await db.execute(
+        select(func.count(GoalLongTerm.id)).where(GoalLongTerm.user_id == current_user.id)
+    )
+    total_longterm = total_longterm_result.scalar() or 0
+    
+    total_goals = total_2week + total_longterm
+    
+    # Get completed goals from both tables
+    completed_2week_result = await db.execute(
+        select(func.count(Goal2Week.id)).where(
+            and_(Goal2Week.user_id == current_user.id, Goal2Week.is_completed == True)
+        )
+    )
+    completed_2week = completed_2week_result.scalar() or 0
+    
+    completed_longterm_result = await db.execute(
+        select(func.count(GoalLongTerm.id)).where(
+            and_(GoalLongTerm.user_id == current_user.id, GoalLongTerm.is_completed == True)
+        )
+    )
+    completed_longterm = completed_longterm_result.scalar() or 0
+    
+    completed_goals = completed_2week + completed_longterm
+    
+    # Get goals by type from both tables
+    # 2-week goals by type
+    percentage_2week_result = await db.execute(
+        select(func.count(Goal2Week.id)).where(
+            and_(Goal2Week.user_id == current_user.id, Goal2Week.goal_type == "percentage")
+        )
+    )
+    percentage_2week = percentage_2week_result.scalar() or 0
+    
+    counter_2week_result = await db.execute(
+        select(func.count(Goal2Week.id)).where(
+            and_(Goal2Week.user_id == current_user.id, Goal2Week.goal_type == "counter")
+        )
+    )
+    counter_2week = counter_2week_result.scalar() or 0
+    
+    checklist_2week_result = await db.execute(
+        select(func.count(Goal2Week.id)).where(
+            and_(Goal2Week.user_id == current_user.id, Goal2Week.goal_type == "checklist")
+        )
+    )
+    checklist_2week = checklist_2week_result.scalar() or 0
+    
+    # Long-term goals by type
+    percentage_longterm_result = await db.execute(
+        select(func.count(GoalLongTerm.id)).where(
+            and_(GoalLongTerm.user_id == current_user.id, GoalLongTerm.goal_type == "percentage")
+        )
+    )
+    percentage_longterm = percentage_longterm_result.scalar() or 0
+    
+    counter_longterm_result = await db.execute(
+        select(func.count(GoalLongTerm.id)).where(
+            and_(GoalLongTerm.user_id == current_user.id, GoalLongTerm.goal_type == "counter")
+        )
+    )
+    counter_longterm = counter_longterm_result.scalar() or 0
+    
+    checklist_longterm_result = await db.execute(
+        select(func.count(GoalLongTerm.id)).where(
+            and_(GoalLongTerm.user_id == current_user.id, GoalLongTerm.goal_type == "checklist")
+        )
+    )
+    checklist_longterm = checklist_longterm_result.scalar() or 0
+    
+    # Combine totals by type
+    percentage_goals = percentage_2week + percentage_longterm
+    counter_goals = counter_2week + counter_longterm
+    checklist_goals = checklist_2week + checklist_longterm
+    
+    # Get active 2-week goals (non-expired, non-completed)
+    active_2week_result = await db.execute(
+        select(func.count(Goal2Week.id)).where(
+            and_(
+                Goal2Week.user_id == current_user.id,
+                Goal2Week.is_completed == False,
+                Goal2Week.expires_at > current_time
+            )
+        )
+    )
+    active_2_week_goals = active_2week_result.scalar() or 0
+    
+    # Long term goals (all of them, since they don't expire)
+    long_term_goals = total_longterm
+    
+    # Calculate completion rate
+    completion_rate = (completed_goals / total_goals * 100) if total_goals > 0 else 0.0
+    
+    return GoalStats(
+        total_goals=total_goals,
+        completed_goals=completed_goals,
+        percentage_goals=percentage_goals,
+        counter_goals=counter_goals,
+        checklist_goals=checklist_goals,
+        active_2_week_goals=active_2_week_goals,
+        long_term_goals=long_term_goals,
+        completion_rate=round(completion_rate, 1)
+    )

@@ -683,6 +683,7 @@ async def clear_user_activity_data(
     - Calendar entries and associated data
     - Quick access links
     - Pomodoro settings
+    - Daily streak tracking data and resets user streak counters
     
     The core user account remains active and untouched.
     This operation cannot be undone - all activity data will be permanently lost.

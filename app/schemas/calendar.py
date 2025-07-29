@@ -2,6 +2,7 @@ from typing import Optional, List
 from pydantic import BaseModel, Field, validator
 from datetime import datetime, date
 from .journal import Gratitude  # Add gratitude import
+from .goal import Goal  # Add goal import
 
 # Calendar Habit Completion schemas
 class CalendarHabitCompletionBase(BaseModel):
@@ -82,6 +83,7 @@ class CalendarEntryResponse(CalendarEntryBase):
     habit_completions: List[CalendarHabitCompletionResponse] = []
     mood_entry: Optional[CalendarMoodEntryResponse] = None
     gratitudes: List[Gratitude] = []  # Add gratitudes field
+    goals: List[Goal] = []  # Add goals field
     created_at: datetime
     updated_at: datetime
     

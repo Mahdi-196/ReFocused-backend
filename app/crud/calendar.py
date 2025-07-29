@@ -9,7 +9,7 @@ import logging
 
 from app.db.models import (
     User, CalendarEntry, CalendarHabitCompletion, CalendarMoodEntry,
-    Habit, HabitCompletion, MoodEntry, Gratitude
+    Habit, HabitCompletion, MoodEntry, Gratitude, Goal2Week, GoalLongTerm
 )
 from app.schemas.calendar import (
     CalendarEntryCreate, CalendarEntryUpdate,
@@ -83,6 +83,9 @@ class CalendarCRUD:
             for entry in entries:
                 entry.gratitudes = gratitude_by_date.get(entry.date, [])
             
+            # Add goals data to calendar entries
+            await self._add_goals_to_entries(db, entries, user)
+            
             # Update lock status for all entries
             await self._update_lock_status(db, entries, user)
             
@@ -121,6 +124,23 @@ class CalendarCRUD:
             entry = result.scalar_one_or_none()
             
             if entry:
+                # Add gratitude data
+                try:
+                    gratitude_entries, _ = await GratitudeCRUD.get_user_gratitude(
+                        db, user.id, 
+                        start_date=entry_date, 
+                        end_date=entry_date,
+                        limit=100
+                    )
+                    entry.gratitudes = gratitude_entries
+                except Exception as e:
+                    logger.error(f"Error fetching gratitude entries for user {user.id}: {str(e)}")
+                    entry.gratitudes = []
+                
+                # Add goals data
+                goals = await self._get_goals_for_date(db, user, entry_date)
+                entry.goals = goals
+                
                 # Update lock status
                 await self._update_lock_status(db, [entry], user)
             
@@ -463,6 +483,80 @@ class CalendarCRUD:
         if updates_needed:
             await db.commit()
     
+    async def _add_goals_to_entries(
+        self,
+        db: AsyncSession,
+        entries: List[CalendarEntry],
+        user: User
+    ) -> None:
+        """Add goals data to calendar entries"""
+        try:
+            for entry in entries:
+                # Get goals for this specific date
+                goals = await self._get_goals_for_date(db, user, entry.date)
+                entry.goals = goals
+        except Exception as e:
+            logger.error(f"Error adding goals to calendar entries for user {user.id}: {str(e)}")
+    
+    async def _get_goals_for_date(
+        self,
+        db: AsyncSession,
+        user: User,
+        target_date: date
+    ) -> List:
+        """Get goals for a specific date"""
+        try:
+            goals = []
+            
+            # Query 2-week goals for the specific date
+            query_2week = select(Goal2Week).where(
+                and_(
+                    Goal2Week.user_id == user.id,
+                    or_(
+                        and_(
+                            func.date(Goal2Week.created_at) == target_date
+                        ),
+                        and_(
+                            Goal2Week.is_completed == True,
+                            func.date(Goal2Week.completed_at) == target_date
+                        )
+                    )
+                )
+            )
+            
+            result_2week = await db.execute(query_2week)
+            goals_2week = result_2week.scalars().all()
+            goals.extend(goals_2week)
+            
+            # Query long-term goals for the specific date
+            query_longterm = select(GoalLongTerm).where(
+                and_(
+                    GoalLongTerm.user_id == user.id,
+                    or_(
+                        and_(
+                            func.date(GoalLongTerm.created_at) == target_date
+                        ),
+                        and_(
+                            GoalLongTerm.is_completed == True,
+                            func.date(GoalLongTerm.completed_at) == target_date
+                        )
+                    )
+                )
+            )
+            
+            result_longterm = await db.execute(query_longterm)
+            goals_longterm = result_longterm.scalars().all()
+            goals.extend(goals_longterm)
+            
+            # Sort by creation date, most recent first
+            goals.sort(key=lambda g: g.created_at, reverse=True)
+            
+            return goals
+            
+        except Exception as e:
+            logger.error(f"Error getting goals for date {target_date} for user {user.id}: {str(e)}")
+            return []
+
     async def _get_habit_details(
         self, 
         db: AsyncSession, 
