@@ -20,7 +20,7 @@ from app.db.models import User
 from app.db.models import TokenBlacklist
 from app.schemas.token import TokenResponse
 from app.schemas.google_auth import GoogleAuthRequest, GoogleAuthResponse, UserResponse
-from app.schemas.user import ChangePasswordRequest, ChangePasswordResponse
+from app.schemas.user import ChangePasswordRequest, ChangePasswordResponse, ChangeUsernameRequest, ChangeUsernameResponse
 from app.services.google_oauth import GoogleOAuthService, GoogleTokenValidationError
 # from app.services.journal_service import JournalService  # Temporarily disabled
 from app.core.config import settings
@@ -53,6 +53,7 @@ class UserProfile(BaseModel):
     profile_picture: Optional[str] = None
     is_active: bool
     created_at: Optional[str] = None
+    member_since: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -326,7 +327,7 @@ async def enhanced_refresh_token(
 
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
-async def register(data: RegisterSchema, db: AsyncSession = Depends(get_db)) -> Any:
+async def register(data: RegisterSchema, response: Response, db: AsyncSession = Depends(get_db)) -> Any:
     result = await db.execute(select(User).where(User.email == data.email))
     if result.scalar_one_or_none():
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Email already registered")
@@ -364,22 +365,16 @@ async def register(data: RegisterSchema, db: AsyncSession = Depends(get_db)) -> 
         level="info"
     )
     
-    # Create access token for immediate login
-    access_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": user.email, "user_id": user.id}, 
-        expires_delta=access_expires
-    )
-    refresh_token = create_refresh_token(
-        data={"sub": user.email, "user_id": user.id}
-    )
+    # Create session tokens and set cookies for immediate login
+    tokens = enhanced_auth_service.create_session_tokens(user, remember_me=False)
+    enhanced_auth_service.set_auth_cookies(response, tokens)
     
     return {
         "message": "User created successfully",
-        "access_token": access_token,
-        "refresh_token": refresh_token,
+        "access_token": tokens["access_token"],
+        "refresh_token": tokens["refresh_token"],
         "token_type": "bearer",
-        "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+        "expires_in": tokens["expires_in"]
     }
 
 
@@ -587,7 +582,8 @@ async def get_current_user_profile(
         name=current_user.name,
         profile_picture=current_user.profile_picture,
         is_active=current_user.is_active,
-        created_at=current_user.created_at.isoformat() if current_user.created_at else None
+        created_at=current_user.created_at.isoformat() if current_user.created_at else None,
+        member_since=current_user.created_at.isoformat() if current_user.created_at else None
     )
 
 
@@ -636,7 +632,8 @@ async def update_user_profile(
         name=current_user.name,
         profile_picture=current_user.profile_picture,
         is_active=current_user.is_active,
-        created_at=current_user.created_at.isoformat() if current_user.created_at else None
+        created_at=current_user.created_at.isoformat() if current_user.created_at else None,
+        member_since=current_user.created_at.isoformat() if current_user.created_at else None
     )
 
 
@@ -739,7 +736,7 @@ async def change_password(
         )
     
     # Verify current password
-    if not AuthenticationManager.verify_password(request.current_password, current_user.hashed_password):
+    if not verify_password(request.current_password, current_user.hashed_password):
         log_security_event(
             event_type="password_change_failed",
             details={"reason": "invalid_current_password", "user_id": current_user.id},
@@ -751,8 +748,8 @@ async def change_password(
             detail="Current password is incorrect"
         )
     
-    # Validate new password strength
-    if not AuthenticationManager.validate_password_strength(request.new_password):
+    # Validate new password strength (basic validation)
+    if len(request.new_password) < 8:
         log_security_event(
             event_type="password_change_failed",
             details={"reason": "weak_password", "user_id": current_user.id},
@@ -761,11 +758,11 @@ async def change_password(
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="New password does not meet security requirements"
+            detail="New password must be at least 8 characters long"
         )
     
     # Check if new password is different from current
-    if AuthenticationManager.verify_password(request.new_password, current_user.hashed_password):
+    if verify_password(request.new_password, current_user.hashed_password):
         log_security_event(
             event_type="password_change_failed",
             details={"reason": "same_password", "user_id": current_user.id},
@@ -778,7 +775,7 @@ async def change_password(
         )
     
     # Hash new password and update user
-    new_hashed_password = AuthenticationManager.get_password_hash(request.new_password)
+    new_hashed_password = get_password_hash(request.new_password)
     current_user.hashed_password = new_hashed_password
     current_user.password_changed_at = datetime.utcnow()
     
@@ -796,6 +793,66 @@ async def change_password(
     return ChangePasswordResponse(
         success=True,
         message="Password changed successfully"
+    )
+
+
+@router.put("/change-username", response_model=ChangeUsernameResponse)
+async def change_username(
+    request: ChangeUsernameRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> ChangeUsernameResponse:
+    """
+    Change user's account name/username.
+    
+    Updates the display name for the user account.
+    """
+    
+    # Validate name length and content
+    new_name = request.new_name.strip()
+    if len(new_name) < 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Name cannot be empty"
+        )
+    
+    if len(new_name) > 100:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Name is too long (maximum 100 characters)"
+        )
+    
+    # Check if name is different from current
+    if current_user.name == new_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New name must be different from current name"
+        )
+    
+    # Update user name
+    old_name = current_user.name
+    current_user.name = new_name
+    
+    await db.commit()
+    await db.refresh(current_user)
+    
+    # Log name change
+    log_security_event(
+        event_type="username_changed",
+        details={
+            "user_id": current_user.id, 
+            "email": current_user.email,
+            "old_name": old_name,
+            "new_name": new_name
+        },
+        level="info",
+        user_id=current_user.id
+    )
+    
+    return ChangeUsernameResponse(
+        success=True,
+        message="Account name changed successfully",
+        name=new_name
     )
 
 

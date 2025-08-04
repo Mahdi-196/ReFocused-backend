@@ -118,4 +118,16 @@ class ChangePasswordRequest(BaseModel):
 class ChangePasswordResponse(BaseModel):
     """Schema for password change response."""
     success: bool
-    message: str 
+    message: str
+
+
+class ChangeUsernameRequest(BaseModel):
+    """Schema for username/name change requests."""
+    new_name: str = Field(..., min_length=1, max_length=100)
+
+
+class ChangeUsernameResponse(BaseModel):
+    """Schema for username/name change response."""
+    success: bool
+    message: str
+    name: str 
