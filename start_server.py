@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Server startup script with proper environment variable loading.
 """

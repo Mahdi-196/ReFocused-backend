@@ -14,12 +14,13 @@ from app.core.security import (
     get_password_hash,
     log_security_event,
 )
-from app.core.auth import get_current_user, oauth2_scheme  # Import centralized oauth2_scheme
+from app.core.auth import get_current_user, oauth2_scheme, AuthenticationManager  # Import centralized oauth2_scheme
 from app.db.database import get_db
 from app.db.models import User
 from app.db.models import TokenBlacklist
 from app.schemas.token import TokenResponse
 from app.schemas.google_auth import GoogleAuthRequest, GoogleAuthResponse, UserResponse
+from app.schemas.user import ChangePasswordRequest, ChangePasswordResponse
 from app.services.google_oauth import GoogleOAuthService, GoogleTokenValidationError
 # from app.services.journal_service import JournalService  # Temporarily disabled
 from app.core.config import settings
@@ -709,6 +710,93 @@ async def auth_status(
             "error": "Authentication check failed",
             "redirect_url": "/"
         }
+
+
+@router.put("/change-password", response_model=ChangePasswordResponse)
+async def change_password(
+    request: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> ChangePasswordResponse:
+    """
+    Change user password with security validation.
+    
+    Requires current password verification and validates new password strength.
+    Only works for users with password-based authentication (not OAuth users).
+    """
+    
+    # Check if user has a password (not OAuth-only user)
+    if not current_user.hashed_password:
+        log_security_event(
+            event_type="password_change_failed",
+            details={"reason": "oauth_user_no_password", "user_id": current_user.id},
+            level="warning",
+            user_id=current_user.id
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password change not available for OAuth-only accounts"
+        )
+    
+    # Verify current password
+    if not AuthenticationManager.verify_password(request.current_password, current_user.hashed_password):
+        log_security_event(
+            event_type="password_change_failed",
+            details={"reason": "invalid_current_password", "user_id": current_user.id},
+            level="warning",
+            user_id=current_user.id
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect"
+        )
+    
+    # Validate new password strength
+    if not AuthenticationManager.validate_password_strength(request.new_password):
+        log_security_event(
+            event_type="password_change_failed",
+            details={"reason": "weak_password", "user_id": current_user.id},
+            level="warning",
+            user_id=current_user.id
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password does not meet security requirements"
+        )
+    
+    # Check if new password is different from current
+    if AuthenticationManager.verify_password(request.new_password, current_user.hashed_password):
+        log_security_event(
+            event_type="password_change_failed",
+            details={"reason": "same_password", "user_id": current_user.id},
+            level="warning",
+            user_id=current_user.id
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must be different from current password"
+        )
+    
+    # Hash new password and update user
+    new_hashed_password = AuthenticationManager.get_password_hash(request.new_password)
+    current_user.hashed_password = new_hashed_password
+    current_user.password_changed_at = datetime.utcnow()
+    
+    await db.commit()
+    await db.refresh(current_user)
+    
+    # Log successful password change
+    log_security_event(
+        event_type="password_changed",
+        details={"user_id": current_user.id, "email": current_user.email},
+        level="info",
+        user_id=current_user.id
+    )
+    
+    return ChangePasswordResponse(
+        success=True,
+        message="Password changed successfully"
+    )
 
 
 

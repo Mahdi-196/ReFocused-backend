@@ -108,4 +108,14 @@ class ProfileUpdate(BaseModel):
     """Schema for profile update requests."""
     name: Optional[str] = None
     profile_picture: Optional[str] = None
-    avatar: Optional[str] = None  # Legacy support for frontend compatibility 
+    avatar: Optional[str] = None  # Legacy support for frontend compatibility
+
+class ChangePasswordRequest(BaseModel):
+    """Schema for password change requests."""
+    current_password: str = Field(..., min_length=1, max_length=128)
+    new_password: str = Field(..., min_length=8, max_length=128)
+    
+class ChangePasswordResponse(BaseModel):
+    """Schema for password change response."""
+    success: bool
+    message: str 
