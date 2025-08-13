@@ -19,7 +19,17 @@
       "Bash(PGPASSWORD=password psql:*)",
       "Bash(alembic current:*)",
       "Bash(alembic downgrade:*)",
-      "Bash(alembic stamp:*)"
+      "Bash(alembic stamp:*)",
+      "Bash(chmod:*)",
+      "Bash(mv:*)",
+      "Bash(zip:*)",
+      "Bash(pip install:*)",
+      "Bash(aws logs describe-log-groups:*)",
+      "Bash(PYTHONPATH=. python3 -c \"\nfrom app.core.scheduler import content_scheduler\nprint(''✅ ContentScheduler imported successfully'')\nprint(f''🔧 Scheduler running: {content_scheduler.is_running}'')\nprint(''📅 Weekly scheduling configured for Sunday midnight'')\nprint(''⏰ Daily scheduling configured for every midnight'')\n\")",
+      "Bash(PYTHONPATH=. python3:*)",
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Bash(true)"
     ],
     "deny": []
   }

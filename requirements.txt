@@ -1,53 +1,18 @@
-# Production Requirements for ReFocused Backend
-
-# Core FastAPI & Web Framework
-fastapi==0.110.0
-uvicorn==0.34.2
-gunicorn==21.2.0
-starlette==0.36.3
-
-# Database & ORM
-asyncpg==0.30.0
-psycopg2-binary==2.9.10
-sqlalchemy==2.0.41
-alembic==1.16.1
-greenlet==3.2.3
-
-# Authentication & Security
-bcrypt==4.3.0
-python-jose==3.4.0
-passlib==1.7.4
-cryptography==45.0.2
-
-# HTTP & Requests
-httpx==0.28.1
-requests==2.32.3
-
-# Data Validation & Settings
-pydantic==2.11.5
-pydantic-settings==2.9.1
-python-dotenv==1.1.0
-
-# Google OAuth
-google-auth==2.40.2
-google-auth-oauthlib==1.2.2
-
-# Celery for Background Tasks
-celery==5.3.0
-redis==5.0.0
-
-# Caching
-redis[hiredis]==5.0.0
-
-# Monitoring and Observability
-prometheus-client==0.19.0
-structlog==23.2.0
-python-json-logger==2.0.7
-psutil==5.9.6
-
-# Other Dependencies
-python-multipart==0.0.20
-email-validator==2.2.0
-pytz==2024.2
+fastapi==0.104.1
+uvicorn==0.24.0
+sqlalchemy==2.0.23
+alembic==1.12.1
+psycopg2-binary==2.9.9
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.6
+celery==5.3.4
+redis==5.0.1
+pydantic==2.5.0
+pydantic-settings==2.1.0
+email-validator==2.1.0
+httpx==0.25.2
+jinja2==3.1.2
 python-dateutil==2.8.2
-itsdangerous==2.2.0
+pytz==2023.3
+apscheduler==3.10.4

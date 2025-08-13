@@ -300,6 +300,22 @@ async def startup_event():
     logger.info(f"🔒 Security logging: {'enabled' if settings.SECURITY_LOG_ENABLED else 'disabled'}")
     logger.info(f"🌐 CORS origins: {settings.CORS_ALLOWED_ORIGINS}")
     
+    # Start content scheduler (daily and weekly)
+    try:
+        from app.core.scheduler import content_scheduler
+        content_scheduler.start_scheduler()
+        logger.info("✅ Content scheduler started")
+        
+        next_runs = content_scheduler.get_next_run_times()
+        if next_runs:
+            if next_runs.get('daily'):
+                logger.info(f"⏰ Next daily content generation: {next_runs.get('daily')}")
+            if next_runs.get('weekly'):
+                logger.info(f"📅 Next weekly content generation: {next_runs.get('weekly')}")
+        
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to start content scheduler: {str(e)}")
+    
     # Start background mood cleanup task
     try:
         import asyncio
@@ -317,7 +333,15 @@ async def startup_event():
 # Shutdown event
 @app.on_event("shutdown")
 async def shutdown_event():
-    logger.info("Application shutdown - Security features terminated")
+    logger.info("🛑 Application shutdown - Security features terminated")
+    
+    # Stop content scheduler
+    try:
+        from app.core.scheduler import content_scheduler
+        content_scheduler.stop_scheduler()
+        logger.info("✅ Content scheduler stopped")
+    except Exception as e:
+        logger.warning(f"⚠️ Error stopping content scheduler: {str(e)}")
     
     # Streak scheduler cleanup removed - module doesn't exist
 
