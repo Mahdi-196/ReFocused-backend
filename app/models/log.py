@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, Text
 from sqlalchemy.sql import func
-from app.db.database import Base
+from app.db.models import Base
 
 class SecurityLog(Base):
     __tablename__ = "security_logs"

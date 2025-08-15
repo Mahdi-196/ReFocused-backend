@@ -76,10 +76,10 @@ class Settings(BaseSettings):
     CORS_ALLOWED_METHODS: List[str] = Field(default_factory=lambda: ["*"], env="CORS_ALLOWED_METHODS")
     CORS_ALLOWED_HEADERS: List[str] = Field(default_factory=lambda: ["*"], env="CORS_ALLOWED_HEADERS")
 
-    # Rate Limiting - DISABLED for development
+    # Rate Limiting (per-IP)
     RATE_LIMIT_ENABLED: bool = Field(True, env="RATE_LIMIT_ENABLED")
-    RATE_LIMIT_MAX_REQUESTS: int = Field(100, env="RATE_LIMIT_MAX_REQUESTS")
-    RATE_LIMIT_WINDOW_SECONDS: int = Field(3600, env="RATE_LIMIT_WINDOW_SECONDS")  # 1 hour
+    RATE_LIMIT_MAX_REQUESTS: int = Field(500, env="RATE_LIMIT_MAX_REQUESTS")  # per window
+    RATE_LIMIT_WINDOW_SECONDS: int = Field(60, env="RATE_LIMIT_WINDOW_SECONDS")  # 1 minute
 
     # Rate‑limit headers
     API_RATE_LIMIT_REMAINING: str = Field("X-RateLimit-Remaining", env="API_RATE_LIMIT_REMAINING")
@@ -124,6 +124,17 @@ class Settings(BaseSettings):
     # Security thresholds
     SUSPICIOUS_REQUEST_THRESHOLD: int = Field(50, env="SUSPICIOUS_REQUEST_THRESHOLD")
     FAILED_AUTH_THRESHOLD: int = Field(5, env="FAILED_AUTH_THRESHOLD")
+
+    # Error tracking and tracing
+    SENTRY_DSN: Optional[str] = Field(None, env="SENTRY_DSN")
+    SENTRY_TRACES_SAMPLE_RATE: float = Field(0.2, env="SENTRY_TRACES_SAMPLE_RATE")
+    OTEL_EXPORTER_OTLP_ENDPOINT: Optional[str] = Field(None, env="OTEL_EXPORTER_OTLP_ENDPOINT")
+    OTEL_SERVICE_NAME: str = Field("refocused-backend", env="OTEL_SERVICE_NAME")
+
+    # Deployment/migrations
+    RUN_DB_MIGRATIONS_ON_STARTUP: bool = Field(True, env="RUN_DB_MIGRATIONS_ON_STARTUP")
+    ALEMBIC_INI_PATH: str = Field("alembic.ini", env="ALEMBIC_INI_PATH")
+    MIGRATIONS_PATH: str = Field("app/db/migrations", env="MIGRATIONS_PATH")
 
     # Helpers
     def is_development(self) -> bool:

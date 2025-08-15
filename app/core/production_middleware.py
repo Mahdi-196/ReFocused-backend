@@ -1,8 +1,3 @@
-"""
-Consolidated production middleware for security, monitoring, and performance.
-Replaces multiple overlapping middleware with a single efficient layer.
-"""
-
 import time
 import uuid
 import re
@@ -154,7 +149,7 @@ class ProductionMiddleware(BaseHTTPMiddleware):
         return None
     
     def _check_rate_limit(self, client_ip: str) -> bool:
-        """Simple in-memory rate limiting."""
+        """Simple per-IP sliding-window rate limiting in memory."""
         current_time = time.time()
         window_start = current_time - settings.RATE_LIMIT_WINDOW_SECONDS
         
@@ -248,6 +243,13 @@ class ProductionMiddleware(BaseHTTPMiddleware):
         
         if settings.is_production():
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+        # Rate limit informational headers if enabled
+        if self.rate_limit_enabled and hasattr(self, 'rate_limit_store'):
+            ip_entries = self.rate_limit_store.get(get_client_ip)
+            # We cannot reliably compute remaining without request context here, so include static limit/window
+            response.headers[settings.API_RATE_LIMIT_HEADER] = str(settings.RATE_LIMIT_MAX_REQUESTS)
+            response.headers[settings.API_RATE_LIMIT_RESET] = str(int(time.time() + settings.RATE_LIMIT_WINDOW_SECONDS))
     
     async def _record_metrics_and_logs(self, request: Request, response: Response, start_time: float, client_ip: str):
         """Record metrics and logs efficiently."""

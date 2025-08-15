@@ -18,7 +18,7 @@ from app.schemas.journal import (
 from app.crud.journal import (
     JournalCollectionCRUD, JournalEntryCRUD, GratitudeCRUD, JournalStatsCRUD
 )
-from app.utils.rate_limiter import rate_limit
+# Per-IP rate limiting is enforced by ProductionMiddleware; decorator not needed
 from app.core.config import settings
 
 router = APIRouter()
@@ -52,7 +52,6 @@ def verify_collection_access_token(token: str, collection_id: int, user_id: int)
 
 # Collection endpoints
 @router.get("/collections", response_model=JournalCollectionList)
-@rate_limit()
 async def get_collections(
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
@@ -75,7 +74,6 @@ async def get_collections(
 
 
 @router.post("/collections", response_model=JournalCollection, status_code=status.HTTP_201_CREATED)
-@rate_limit()
 async def create_collection(
     collection: JournalCollectionCreate,
     current_user: User = Depends(get_current_user),
@@ -102,7 +100,6 @@ async def get_collection(
 
 
 @router.put("/collections/{collection_id}", response_model=JournalCollection)
-@rate_limit()
 async def update_collection(
     collection_id: int,
     collection_update: JournalCollectionUpdate,
@@ -137,7 +134,6 @@ async def delete_collection(
 
 
 @router.post("/collections/{collection_id}/verify-password", response_model=CollectionAccessToken)
-@rate_limit()
 async def verify_collection_password(
     collection_id: int,
     password_data: JournalCollectionPasswordVerify,
@@ -376,7 +372,6 @@ async def get_gratitude(
 
 
 @router.post("/gratitude", response_model=Gratitude, status_code=status.HTTP_201_CREATED)
-@rate_limit()
 async def create_gratitude(
     gratitude: GratitudeCreate,
     current_user: User = Depends(get_current_user),
@@ -419,7 +414,6 @@ async def create_gratitude(
 
 
 @router.put("/gratitude/{gratitude_id}", response_model=Gratitude)
-@rate_limit()
 async def update_gratitude(
     gratitude_id: int,
     gratitude_update: GratitudeUpdate,

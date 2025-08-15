@@ -47,6 +47,8 @@ class ChatResponse(BaseModel):
     response: str = Field(..., description="AI response")
     messages_remaining: int = Field(..., description="Messages remaining today")
     usage: Optional[Dict[str, Any]] = Field(None, description="Token usage information")
+    ip_remaining: int = Field(..., description="Remaining messages for this IP today (max 50)")
+    ip_reset_seconds: int = Field(..., description="Seconds until this IP quota resets")
 
 class ContentPopulationRequest(BaseModel):
     data_type: str = Field(

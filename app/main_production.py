@@ -14,6 +14,21 @@ from app.core.production_middleware import ProductionMiddleware
 from app.core.auth_middleware import SessionAuthenticationMiddleware
 from app.monitoring.logging_config import setup_structured_logging, get_logger
 from app.monitoring.metrics import metrics
+import os
+import asyncio
+
+# Optional: Sentry and OpenTelemetry setup
+try:
+    import sentry_sdk
+    from sentry_sdk.integrations.fastapi import FastApiIntegration
+    from opentelemetry import trace
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+    OTEL_AVAILABLE = True
+except Exception:
+    OTEL_AVAILABLE = False
 
 # Initialize structured logging
 setup_structured_logging()
@@ -62,8 +77,55 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.include_router(api_router, prefix="/api/v1")
 
 # Include monitoring routes at root level (no prefix)
-from app.routers import monitoring
-app.include_router(monitoring.router)
+app.include_router(monitoring_router)
+
+def _setup_sentry_and_tracing():
+    if settings.SENTRY_DSN:
+        try:
+            sentry_sdk.init(
+                dsn=settings.SENTRY_DSN,
+                traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
+                integrations=[FastApiIntegration()],
+                environment=settings.APP_ENV,
+                release="1.0.0",
+            )
+            logger.info("✅ Sentry initialized")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to initialize Sentry: {e}")
+
+    if OTEL_AVAILABLE and settings.OTEL_EXPORTER_OTLP_ENDPOINT:
+        try:
+            resource = Resource(attributes={
+                "service.name": settings.OTEL_SERVICE_NAME,
+                "deployment.environment": settings.APP_ENV,
+            })
+            provider = TracerProvider(resource=resource)
+            exporter = OTLPSpanExporter(endpoint=settings.OTEL_EXPORTER_OTLP_ENDPOINT)
+            provider.add_span_processor(BatchSpanProcessor(exporter))
+            trace.set_tracer_provider(provider)
+            logger.info("✅ OpenTelemetry tracing initialized")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to initialize OpenTelemetry: {e}")
+
+async def _run_db_migrations_if_enabled():
+    if settings.RUN_DB_MIGRATIONS_ON_STARTUP:
+        try:
+            import subprocess
+            logger.info("🗂️ Running database migrations...")
+            subprocess.run(
+                [
+                    "alembic",
+                    "-c",
+                    settings.ALEMBIC_INI_PATH,
+                    "upgrade",
+                    "head",
+                ],
+                check=True,
+            )
+            logger.info("✅ Database migrations applied")
+        except Exception as e:
+            logger.error(f"❌ Failed to run migrations: {e}")
+            raise
 
 @app.on_event("startup")
 async def startup_event():
@@ -72,9 +134,13 @@ async def startup_event():
     
     # Initialize monitoring
     metrics.set_health_status(True)
+
+    # Error tracking & tracing
+    _setup_sentry_and_tracing()
     
-    # Test database connection
+    # Run DB migrations if enabled, then test DB connection
     try:
+        await _run_db_migrations_if_enabled()
         from app.db.database import async_session
         from sqlalchemy import text
         async with async_session() as db:

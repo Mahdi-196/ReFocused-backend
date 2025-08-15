@@ -37,6 +37,10 @@ COPY --from=builder /root/.local /home/app/.local
 WORKDIR /app
 COPY --chown=app:app . .
 
+# Prepare log directory for production file logging
+RUN mkdir -p /var/log/refocused \
+    && chown -R app:app /var/log/refocused
+
 # Switch to non-root user
 USER app
 
@@ -47,5 +51,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"] 
+# Run the production application
+CMD ["uvicorn", "app.main_production:app", "--host", "0.0.0.0", "--port", "8000"]

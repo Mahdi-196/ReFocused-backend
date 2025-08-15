@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Request
 from fastapi.security import HTTPBearer
 from typing import Dict, Any
 import logging
+from datetime import datetime, timedelta, timezone
 
 from ....services.ai_service import ai_service
 from ....schemas.ai import (
@@ -11,10 +12,27 @@ from ....schemas.ai import (
 )
 from ....core.auth import get_current_user
 from ....db.models import User
+from ....caching.redis_cache import cache
 
 router = APIRouter()
 security = HTTPBearer()
 logger = logging.getLogger(__name__)
+
+# In-memory fallback for per-IP counts when Redis is unavailable (single-process only).
+_ip_counts_fallback = {}
+
+def _get_client_ip(request: Request) -> str:
+    """Best-effort client IP extraction (X-Forwarded-For first, then socket)."""
+    xf = request.headers.get("x-forwarded-for")
+    if xf:
+        return xf.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+def _seconds_until_midnight_utc() -> int:
+    """Seconds remaining until next UTC midnight."""
+    now = datetime.now(timezone.utc)
+    reset = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return int((reset - now).total_seconds())
 
 @router.get(
     "/quote-of-day", 
@@ -128,14 +146,49 @@ async def get_mind_fuel(
     "/chat",
     response_model=ChatResponse,
     summary="AI Chat",
-    description="Interactive AI chat with rate limiting (50 messages per day per user)"
+    description="Interactive AI chat with rate limiting (50 messages per day per IP)"
 )
 async def ai_chat(
     chat_request: ChatRequest,
+    request: Request,
     current_user: User = Depends(get_current_user)
 ) -> ChatResponse:
-    """Send message to AI chat via AWS Lambda with rate limiting"""
+    """Send message to AI chat via AWS Lambda with per-IP rate limiting"""
     try:
+        # Enforce per-IP daily quota (50/day)
+        limit = 50
+        ip = _get_client_ip(request)
+        date_key = datetime.now(timezone.utc).date().isoformat()
+        redis_key = f"ai:chat:ip:{ip}:{date_key}"
+        ttl_hint = _seconds_until_midnight_utc()
+
+        count = await cache.increment(redis_key, 1, ttl_hint) if cache.enabled else None
+        if count is None:
+            # Fallback: track in-memory for single-process runs
+            now_ts = datetime.now(timezone.utc).timestamp()
+            rec = _ip_counts_fallback.get(ip)
+            if not rec or now_ts >= rec["reset_at"]:
+                # reset at next midnight UTC
+                reset_dt = (datetime.now(timezone.utc) + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+                rec = {"count": 0, "reset_at": reset_dt.timestamp()}
+            rec["count"] += 1
+            _ip_counts_fallback[ip] = rec
+            count = rec["count"]
+            ttl_seconds = max(1, int(rec["reset_at"] - now_ts))
+        else:
+            ttl_q = await cache.get_ttl(redis_key)
+            ttl_seconds = ttl_q if ttl_q is not None else ttl_hint
+
+        if count > limit:
+            # Block and expose reset for frontend throttling
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Daily IP message limit exceeded (50 per day)",
+                headers={"Retry-After": str(ttl_seconds)}
+            )
+
+        ip_remaining = max(0, limit - count)
+
         conversation_history = []
         if chat_request.conversation_history:
             conversation_history = [
@@ -170,7 +223,9 @@ async def ai_chat(
         return ChatResponse(
             response=result["response"],
             messages_remaining=result.get("messages_remaining", 0),
-            usage=result.get("usage")
+            usage=result.get("usage"),
+            ip_remaining=ip_remaining,
+            ip_reset_seconds=ttl_seconds
         )
         
     except HTTPException:

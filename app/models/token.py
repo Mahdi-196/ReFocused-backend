@@ -1,6 +1,6 @@
 from sqlalchemy import Column, String, DateTime
 from sqlalchemy.sql import func
-from app.db.database import Base
+from app.db.models import Base
 
 class TokenBlacklist(Base):
     __tablename__ = "token_blacklist"

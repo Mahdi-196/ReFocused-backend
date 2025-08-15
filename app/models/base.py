@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, DateTime
 from sqlalchemy.sql import func
-from app.db.database import Base
+from app.db.models import Base
 
 class BaseModel(Base):
     __abstract__ = True

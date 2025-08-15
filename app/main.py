@@ -194,37 +194,34 @@ async def statistics_health_check():
             "timestamp": datetime.utcnow().isoformat()
         }
 
-# Debug endpoint for troubleshooting
-@app.get("/debug/headers")
-async def debug_headers(request: Request):
-    """Debug endpoint to check what headers are being received"""
-    return {
-        "headers": dict(request.headers),
-        "method": request.method,
-        "url": str(request.url),
-        "client": request.client.host if request.client else None
-    }
+# Debug endpoints disabled in production for security
+if settings.is_development():
+    @app.get("/debug/headers")
+    async def debug_headers(request: Request):
+        return {
+            "headers": dict(request.headers),
+            "method": request.method,
+            "url": str(request.url),
+            "client": request.client.host if request.client else None
+        }
 
 # Debug mock date endpoints removed - using real dates only
 
-# Debug auth endpoint
-@app.get("/debug/auth")
-async def debug_auth(request: Request, db: AsyncSession = Depends(get_db)):
-    """Debug endpoint to test authentication"""
-    auth_header = request.headers.get("Authorization")
-    if not auth_header:
-        return {"error": "No Authorization header found", "headers": dict(request.headers)}
-    
-    if not auth_header.startswith("Bearer "):
-        return {"error": "Authorization header doesn't start with 'Bearer '", "auth_header": auth_header}
-    
-    token = auth_header.split(" ")[1]
-    try:
-        from app.core.auth import get_current_user_from_token
-        user = await get_current_user_from_token(token, db)
-        return {"success": True, "user_id": user.id, "user_email": user.email}
-    except Exception as e:
-        return {"error": str(e), "token_preview": token[:20] + "..." if len(token) > 20 else token}
+if settings.is_development():
+    @app.get("/debug/auth")
+    async def debug_auth(request: Request, db: AsyncSession = Depends(get_db)):
+        auth_header = request.headers.get("Authorization")
+        if not auth_header:
+            return {"error": "No Authorization header found", "headers": dict(request.headers)}
+        if not auth_header.startswith("Bearer "):
+            return {"error": "Authorization header doesn't start with 'Bearer '", "auth_header": auth_header}
+        token = auth_header.split(" ")[1]
+        try:
+            from app.core.auth import get_current_user_from_token
+            user = await get_current_user_from_token(token, db)
+            return {"success": True, "user_id": user.id, "user_email": user.email}
+        except Exception as e:
+            return {"error": str(e), "token_preview": token[:20] + "..." if len(token) > 20 else token}
 
 # Security metrics endpoint
 @app.get("/security/metrics")

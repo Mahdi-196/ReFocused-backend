@@ -5,9 +5,8 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship, DeclarativeBase
 from sqlalchemy.sql import func
 from datetime import datetime, timedelta, timezone
-from app.db.database import Base
 from typing import Union
-
+from sqlalchemy.orm import DeclarativeBase
 # Base class for all models
 class Base(DeclarativeBase):
     pass
@@ -345,7 +344,7 @@ class JournalEntry(Base):
     # Constraints
     __table_args__ = (
         CheckConstraint("LENGTH(TRIM(title)) > 0 AND LENGTH(TRIM(title)) <= 200", name='chk_entry_title_length'),
-        CheckConstraint("LENGTH(content) <= 50000", name='chk_entry_content_length'),
+        CheckConstraint("LENGTH(content) <= 150000", name='chk_entry_content_length'),
         Index('idx_entries_collection_id', 'collection_id'),
         Index('idx_entries_created_at', 'created_at'),
         Index('idx_entries_updated_at', 'updated_at'),

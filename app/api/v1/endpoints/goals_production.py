@@ -24,7 +24,7 @@ from app.schemas.goal import (
 )
 from app.core.security import log_security_event
 from app.utils.goal_utils import calculate_2week_expiration, is_goal_expired
-from app.utils.rate_limiter import rate_limit
+# Per-IP rate limiting is enforced by ProductionMiddleware; decorator not needed
 
 # Set up logging
 logger = logging.getLogger("goals_api")
@@ -166,7 +166,6 @@ def validate_goal_data(goal_data: GoalCreate) -> None:
             )
 
 @router.get("", response_model=List[GoalSchema])
-@rate_limit(requests_per_minute=RATE_LIMIT_REQUESTS)
 async def get_goals(
     request: Request,
     response: Response,
@@ -309,7 +308,6 @@ async def get_goals(
         )
 
 @router.post("", response_model=GoalSchema, status_code=status.HTTP_201_CREATED)
-@rate_limit(requests_per_minute=30)  # More restrictive for creation
 async def create_goal(
     goal_data: GoalCreate,
     request: Request,
