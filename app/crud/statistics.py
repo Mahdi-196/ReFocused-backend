@@ -13,18 +13,8 @@ class StatisticsCRUD:
         """Get today's statistics record for a user or create it if it doesn't exist."""
         from datetime import datetime, timezone
         
-        # Debug multiple date calculations (keep for monitoring)
-        local_today = date.today()
-        utc_today = datetime.now(timezone.utc).date()
-        naive_today = datetime.now().date()
-        
-        print(f"🔍 DEBUG: Local today: {local_today}")
-        print(f"🔍 DEBUG: UTC today: {utc_today}")
-        print(f"🔍 DEBUG: Naive today: {naive_today}")
-        
         # USER-CENTRIC FIX: Use local date to match user's calendar expectations
-        today = local_today  # Use local date instead of UTC
-        print(f"🔍 DEBUG: Using LOCAL date for database: {today}")
+        today = date.today()  # Use local date instead of UTC
         
         # Try to get today's record
         result = await db.execute(
@@ -39,7 +29,6 @@ class StatisticsCRUD:
         
         # Create if not exists
         if not stats:
-            print(f"🔍 DEBUG: Creating NEW record for user_id={user_id}, date={today}")
             stats = UserStatistics(
                 user_id=user_id,
                 date=today,
@@ -49,8 +38,6 @@ class StatisticsCRUD:
             )
             db.add(stats)
             await db.flush()
-        else:
-            print(f"🔍 DEBUG: Found EXISTING record id={stats.id}, date={stats.date}")
             
         return stats
 

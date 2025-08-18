@@ -138,18 +138,20 @@ async def startup_event():
     # Error tracking & tracing
     _setup_sentry_and_tracing()
     
-    # Run DB migrations if enabled, then test DB connection
-    try:
-        await _run_db_migrations_if_enabled()
-        from app.db.database import async_session
-        from sqlalchemy import text
-        async with async_session() as db:
-            await db.execute(text("SELECT 1"))
-        logger.info("✅ Database connection successful")
-    except Exception as e:
-        logger.error(f"❌ Database connection failed: {str(e)}")
-        metrics.set_health_status(False)
-        raise
+    # Run DB migrations and ping unless running under pytest (avoid event loop contention)
+    import os as _os
+    if not (_os.getenv("PYTEST_CURRENT_TEST") or _os.getenv("DISABLE_DB_STARTUP") == "1"):
+        try:
+            await _run_db_migrations_if_enabled()
+            from app.db.database import async_session
+            from sqlalchemy import text
+            async with async_session() as db:
+                await db.execute(text("SELECT 1"))
+            logger.info("✅ Database connection successful")
+        except Exception as e:
+            logger.error(f"❌ Database connection failed: {str(e)}")
+            metrics.set_health_status(False)
+            raise
     
     # Log configuration
     logger.info(f"🏃 Running in {settings.APP_ENV} mode")

@@ -492,6 +492,8 @@ class DeletedEmail(Base):
         )
         await db.commit()
 
+
+
 class SecurityLog(Base):
     __tablename__ = "security_logs"
     

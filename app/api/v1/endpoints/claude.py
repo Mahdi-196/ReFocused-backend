@@ -6,11 +6,12 @@ import logging
 from ....services.ai_service import ai_service
 from ....schemas.ai import (
     QuoteResponse, WordResponse, MindFuelResponse, ChatRequest, ChatResponse,
-    ContentPopulationRequest, ContentPopulationResponse, AIErrorResponse,
+    ContentPopulationResponse, AIErrorResponse,
     WritingPromptsResponse, AiSuggestionsResponse, WeeklyThemeResponse
 )
 from ....core.auth import get_current_user
 from ....db.models import User
+from ....core.config import settings
 
 router = APIRouter()
 security = HTTPBearer()
@@ -464,7 +465,7 @@ async def ai_health_check() -> Dict[str, Any]:
         
         return {
             "status": "healthy" if quote_result else "degraded",
-            "api_gateway": "https://kzrybkpw5a.execute-api.us-east-1.amazonaws.com",
+            "api_gateway": settings.AI_API_BASE_URL,
             "endpoints": {
                 "quote_of_day": "accessible" if quote_result else "error",
                 "word_of_day": "available",
@@ -481,5 +482,5 @@ async def ai_health_check() -> Dict[str, Any]:
         return {
             "status": "unhealthy",
             "error": str(e),
-            "api_gateway": "https://kzrybkpw5a.execute-api.us-east-1.amazonaws.com"
+            "api_gateway": settings.AI_API_BASE_URL
         }

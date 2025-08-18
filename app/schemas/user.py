@@ -1,6 +1,7 @@
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, EmailStr, Field
 from datetime import datetime
+from app.core.config import settings
 
 class UserBase(BaseModel):
     email: EmailStr
@@ -79,7 +80,7 @@ class AvatarUpdateRequest(BaseModel):
                     "seed": "user123_avatar",
                     "options": {}
                 },
-                "avatar_url": "https://api.dicebear.com/7.x/open-peeps/svg?seed=user123_avatar"
+                "avatar_url": f"{settings.DICEBEAR_API_BASE_URL}/7.x/open-peeps/svg?seed=user123_avatar"
             }
         }
 
@@ -95,7 +96,7 @@ class AvatarResponse(BaseModel):
             "example": {
                 "success": True,
                 "message": "Avatar updated successfully",
-                "avatar_url": "https://api.dicebear.com/7.x/open-peeps/svg?seed=user123_avatar",
+                "avatar_url": f"{settings.DICEBEAR_API_BASE_URL}/7.x/open-peeps/svg?seed=user123_avatar",
                 "avatar_config": {
                     "style": "open-peeps", 
                     "seed": "user123_avatar",

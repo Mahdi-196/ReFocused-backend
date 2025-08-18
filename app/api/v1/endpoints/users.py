@@ -296,7 +296,7 @@ def _generate_avatar_url(avatar_config: AvatarConfig) -> str:
     dicebear_style = style_mapping.get(avatar_config.style.lower(), "open-peeps")
     
     # Base URL for DiceBear API v7
-    base_url = f"https://api.dicebear.com/7.x/{dicebear_style}/svg"
+    base_url = f"{settings.DICEBEAR_API_BASE_URL}/7.x/{dicebear_style}/svg"
     
     # Build query parameters
     params = [f"seed={avatar_config.seed}"]
@@ -863,7 +863,6 @@ async def delete_own_account(
     db: AsyncSession = Depends(get_db)
 ):
     user_id = current_user.id  # Cache before deletion to avoid MissingGreenlet error
-    print(f"[DEBUG] Account deletion requested for user_id={user_id}")
     try:
         from app.core.security import log_security_event
         from app.core.enhanced_auth import enhanced_auth_service
@@ -886,28 +885,23 @@ async def delete_own_account(
                 payload = jwt.decode(access_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
                 expires_at = datetime.fromtimestamp(payload["exp"])
                 await TokenBlacklist.add_token(db, access_token, expires_at)
-                print(f"[DEBUG] Blacklisted access token for user_id={user_id}")
             except JWTError:
                 pass
         
         if refresh_token:
             try:
-                payload = jwt.decode(refresh_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+                payload = jwt.decode(refresh_token, settings.SECRET_KEY, algorithms=[settings.ALGITHM])
                 expires_at = datetime.fromtimestamp(payload["exp"])
                 await TokenBlacklist.add_token(db, refresh_token, expires_at)
-                print(f"[DEBUG] Blacklisted refresh token for user_id={user_id}")
             except JWTError:
                 pass
         
         # Record the deleted email before deleting the user
         user_email = current_user.email
         await DeletedEmail.add_deleted_email(db, user_email, user_id)
-        print(f"[DEBUG] Recorded deleted email: {user_email}")
         
-        print(f"[DEBUG] Deleting user_id={user_id} from database...")
         await db.delete(current_user)
         await db.commit()
-        print(f"[DEBUG] Account deletion successful for user_id={user_id}")
         log_security_event(
             event_type="account_deletion_completed",
             details={"user_id": user_id, "timestamp": datetime.utcnow().isoformat()},
@@ -922,8 +916,6 @@ async def delete_own_account(
     except Exception as e:
         await db.rollback()
         from app.core.security import log_security_event
-        print(f"[ERROR] Account deletion error for user_id={user_id}: {e} ({type(e)})")
-        print(traceback.format_exc())
         log_security_event(
             event_type="account_deletion_failed",
             details={"user_id": user_id, "error": str(e)},

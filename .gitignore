@@ -136,7 +136,7 @@ dist
 .yarn/install-state.gz
 .pnp.*
 .cursor
-
+.claude
 # Python
 __pycache__/
 *.py[cod]
@@ -208,3 +208,4 @@ Thumbs.db
 
 # Security logs
 security*.log
+

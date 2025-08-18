@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Response, Depends, HTTPException
+from fastapi import FastAPI, Request, Response, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -52,15 +52,15 @@ app = FastAPI(
 # CORS must be the FIRST middleware - Enhanced for cookies and auth
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
+    allow_origins=settings.CORS_ALLOWED_ORIGINS + [
         "https://accounts.google.com",  # Allow Google OAuth origin
+        # Add your production domain here when ready
+        # "https://www.yourdomain.com",
+        # "https://yourdomain.com",
     ],
-    allow_credentials=True,  # Essential for cookies
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-    allow_headers=[
-        "*",
+    allow_credentials=settings.CORS_ALLOW_CREDENTIALS,
+    allow_methods=settings.CORS_ALLOWED_METHODS,
+    allow_headers=settings.CORS_ALLOWED_HEADERS + [
         "Authorization",
         "Content-Type", 
         "X-Refresh-Token",
@@ -94,6 +94,8 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 # Include API router
 app.include_router(api_router, prefix="/api/v1")
 app.include_router(monitoring_router)  # Mount monitoring at root level
+
+# Email subscription endpoints removed; using AWS API Gateway + Lambda directly
 
 # Google OAuth COOP middleware - Fixed to properly handle OAuth flows
 @app.middleware("http")

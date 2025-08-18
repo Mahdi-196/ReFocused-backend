@@ -136,6 +136,38 @@ class Settings(BaseSettings):
     ALEMBIC_INI_PATH: str = Field("alembic.ini", env="ALEMBIC_INI_PATH")
     MIGRATIONS_PATH: str = Field("app/db/migrations", env="MIGRATIONS_PATH")
 
+    # External Email Subscription API (API Gateway → Lambda)
+    EMAIL_API_BASE_URL: str = Field(
+        default="https://39qeq0f8u5.execute-api.us-east-1.amazonaws.com",
+        env="EMAIL_API_BASE_URL",
+    )
+    EMAIL_API_KEY: Optional[str] = Field(None, env="EMAIL_API_KEY")
+    EMAIL_API_PREFIX: str = Field("", env="EMAIL_API_PREFIX")  # No stage for HTTP API
+    
+    # External AI Service API (API Gateway → Lambda)
+    AI_API_BASE_URL: str = Field(
+        default="https://kzrybkpw5a.execute-api.us-east-1.amazonaws.com/api/ai",
+        env="AI_API_BASE_URL",
+    )
+    AI_API_KEY: Optional[str] = Field(None, env="AI_API_KEY")
+    
+    # External Feature Voting API (API Gateway → Lambda)
+    VOTING_API_BASE_URL: str = Field(
+        default="https://example.execute-api.us-east-1.amazonaws.com/api/feature-voting",
+        env="VOTING_API_BASE_URL",
+    )
+    VOTING_API_KEY: Optional[str] = Field(None, env="VOTING_API_KEY")
+    VOTING_API_PREFIX: str = Field("", env="VOTING_API_PREFIX")  # Optional stage prefix
+
+    # External Feedback API (API Gateway → Lambda)
+    FEEDBACK_API_KEY: Optional[str] = Field(None, env="FEEDBACK_API_KEY")
+
+    # External Avatar Generation API
+    DICEBEAR_API_BASE_URL: str = Field(
+        default="https://api.dicebear.com",
+        env="DICEBEAR_API_BASE_URL",
+    )
+
     # Helpers
     def is_development(self) -> bool:
         return self.APP_ENV.lower() == "development"

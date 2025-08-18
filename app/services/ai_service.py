@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 class AIService:
     def __init__(self):
-        self.base_url = "https://kzrybkpw5a.execute-api.us-east-1.amazonaws.com/api/ai"
+        self.base_url = settings.AI_API_BASE_URL
         self.timeout = 30.0
         self.use_local_fallback = True  # Use local Lambda code when AWS fails
         

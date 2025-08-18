@@ -26,7 +26,7 @@ class JournalService:
                 
         except Exception as e:
             # Log error but don't break user registration
-            print(f"Error setting up journal for user {user_id}: {e}")
+            pass
     
     @staticmethod
     async def setup_user_journal_async(db: AsyncSession, user_id: int) -> None:
@@ -54,7 +54,7 @@ class JournalService:
                 
         except Exception as e:
             # Log error but don't break user registration
-            print(f"Error setting up journal for user {user_id}: {e}")
+            pass
     
     @staticmethod
     def validate_collection_access(
