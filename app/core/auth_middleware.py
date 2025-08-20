@@ -157,7 +157,7 @@ class SessionAuthenticationMiddleware(BaseHTTPMiddleware):
                     request.cookies.get("access_token") or
                     request.cookies.get("refresh_token")
                 )
-                is_auth_path = path.startswith("/api/v1/auth/")
+                is_auth_path = path.startswith("/api/v1/auth/") or path == "/auth/refresh"
                 if has_session_cookies and not is_auth_path:
                     csrf_header = request.headers.get(settings.CSRF_HEADER_NAME)
                     csrf_cookie = request.cookies.get("csrf_token")
