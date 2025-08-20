@@ -289,6 +289,11 @@ class EnhancedAuthService:
             
             # Set new cookies
             self.set_auth_cookies(response, new_tokens)
+            # Expose refreshed tokens for downstream handlers (optional JSON return)
+            try:
+                setattr(request.state, "refreshed_tokens", new_tokens)
+            except Exception:
+                pass
             
             # Blacklist old refresh token
             exp_time = datetime.fromtimestamp(payload["exp"])

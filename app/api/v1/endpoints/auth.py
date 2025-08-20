@@ -307,7 +307,11 @@ async def enhanced_logout(
         # Blacklist access token if present
         if access_token:
             try:
-                payload = jwt.decode(access_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+                algorithms = [getattr(settings, "JWT_SIGNING_ALG", settings.ALGORITHM)]
+                key = settings.SECRET_KEY
+                if algorithms[0].upper() == "RS256" and settings.JWT_PUBLIC_KEY:
+                    key = settings.JWT_PUBLIC_KEY
+                payload = jwt.decode(access_token, key, algorithms=algorithms)
                 expires_at = datetime.fromtimestamp(payload["exp"])
                 await TokenBlacklist.add_token(db, access_token, expires_at)
                 user_id = payload.get("sub")
@@ -317,7 +321,11 @@ async def enhanced_logout(
         # Blacklist refresh token if present
         if refresh_token:
             try:
-                payload = jwt.decode(refresh_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+                algorithms = [getattr(settings, "JWT_SIGNING_ALG", settings.ALGORITHM)]
+                key = settings.SECRET_KEY
+                if algorithms[0].upper() == "RS256" and settings.JWT_PUBLIC_KEY:
+                    key = settings.JWT_PUBLIC_KEY
+                payload = jwt.decode(refresh_token, key, algorithms=algorithms)
                 expires_at = datetime.fromtimestamp(payload["exp"])
                 await TokenBlacklist.add_token(db, refresh_token, expires_at)
                 if not user_id:
@@ -387,9 +395,17 @@ async def enhanced_refresh_token(
                 detail="User not found"
             )
         
+        # If tokens were refreshed in this request, include access token in JSON
+        access_token_value = "set_in_cookie"
+        refresh_token_value = "set_in_cookie"
+        if hasattr(request.state, "refreshed_tokens"):
+            tokens = getattr(request.state, "refreshed_tokens") or {}
+            access_token_value = tokens.get("access_token", access_token_value)
+            refresh_token_value = tokens.get("refresh_token", refresh_token_value)
+
         return EnhancedTokenResponse(
-            access_token="set_in_cookie",  # Token is in cookie
-            refresh_token="set_in_cookie",  # Refresh token is in cookie
+            access_token=access_token_value,
+            refresh_token=refresh_token_value,
             token_type="bearer",
             expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
             remember_me=payload.get("remember_me", False),
