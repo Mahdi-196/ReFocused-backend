@@ -149,11 +149,20 @@ class SessionAuthenticationMiddleware(BaseHTTPMiddleware):
         # CSRF protection for cookie-only flows on state-changing requests
         if settings.CSRF_ENABLED and request.method in ("POST", "PUT", "PATCH", "DELETE"):
             auth_header = request.headers.get("Authorization", "")
+            # Skip CSRF for API clients using Bearer auth
             if not auth_header.startswith("Bearer "):
-                csrf_header = request.headers.get(settings.CSRF_HEADER_NAME)
-                csrf_cookie = request.cookies.get("csrf_token")
-                if not csrf_header or not csrf_cookie or csrf_header != csrf_cookie:
-                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF token missing or invalid")
+                # Skip CSRF on unauthenticated requests (no session cookies yet), e.g., login/register
+                has_session_cookies = bool(
+                    request.cookies.get("auth_session") or
+                    request.cookies.get("access_token") or
+                    request.cookies.get("refresh_token")
+                )
+                is_auth_path = path.startswith("/api/v1/auth/")
+                if has_session_cookies and not is_auth_path:
+                    csrf_header = request.headers.get(settings.CSRF_HEADER_NAME)
+                    csrf_cookie = request.cookies.get("csrf_token")
+                    if not csrf_header or not csrf_cookie or csrf_header != csrf_cookie:
+                        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF token missing or invalid")
 
         # Create response and check/refresh auth
         response = await call_next(request)
