@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     # Auth - Professional Grade Settings
     SECRET_KEY: str = Field(..., env="SECRET_KEY")
     ALGORITHM: str = "HS256"
+    # Advanced JWT config (optional RS256 support with JWKS)
+    JWT_SIGNING_ALG: str = Field("HS256", env="JWT_SIGNING_ALG")  # HS256 or RS256
+    JWT_KID: Optional[str] = Field(None, env="JWT_KID")
+    JWT_PRIVATE_KEY: Optional[str] = Field(None, env="JWT_PRIVATE_KEY")  # PEM for RS256
+    JWT_PUBLIC_KEY: Optional[str] = Field(None, env="JWT_PUBLIC_KEY")    # PEM for RS256
+    JWKS_CACHE_TTL: int = Field(86400, env="JWKS_CACHE_TTL")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30  # Short-lived access tokens
     REFRESH_TOKEN_EXPIRE_DAYS: int = Field(7, env="REFRESH_TOKEN_EXPIRE_DAYS")
     REMEMBER_ME_EXPIRE_DAYS: int = Field(30, env="REMEMBER_ME_EXPIRE_DAYS")  # Remember me duration
@@ -41,6 +47,10 @@ class Settings(BaseSettings):
     # Auto-refresh settings
     AUTO_REFRESH_THRESHOLD_MINUTES: int = Field(5, env="AUTO_REFRESH_THRESHOLD_MINUTES")  # Refresh if expires in 5 min
     AUTO_REFRESH_ENABLED: bool = Field(True, env="AUTO_REFRESH_ENABLED")
+
+    # CSRF (double-submit cookie for cookie-auth flows)
+    CSRF_ENABLED: bool = Field(True, env="CSRF_ENABLED")
+    CSRF_HEADER_NAME: str = Field("X-CSRF-Token", env="CSRF_HEADER_NAME")
 
     # Google OAuth
     GOOGLE_CLIENT_ID: str = Field(..., env="GOOGLE_CLIENT_ID")

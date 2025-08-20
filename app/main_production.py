@@ -55,6 +55,7 @@ app.add_middleware(
         "Authorization",
         "Content-Type",
         "X-Refresh-Token",
+        settings.CSRF_HEADER_NAME,
         "X-App-Env",
         "X-Client-Version",
         "X-User-Timezone",

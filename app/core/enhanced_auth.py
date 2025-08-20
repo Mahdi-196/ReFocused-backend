@@ -99,10 +99,24 @@ class EnhancedAuthService:
             domain=settings.COOKIE_DOMAIN,
             path=settings.COOKIE_PATH
         )
+        # CSRF double-submit cookie for cookie-auth flows
+        if settings.CSRF_ENABLED:
+            from app.utils.security import generate_secure_random_string
+            csrf_token = generate_secure_random_string(32)
+            response.set_cookie(
+                key="csrf_token",
+                value=csrf_token,
+                max_age=max_age,
+                httponly=False,  # Must be readable by JS to set header
+                secure=settings.COOKIE_SECURE,
+                samesite=samesite_value,
+                domain=settings.COOKIE_DOMAIN,
+                path=settings.COOKIE_PATH
+            )
     
     def clear_auth_cookies(self, response: Response) -> None:
         """Clear all authentication cookies."""
-        cookie_names = ["access_token", "refresh_token", "auth_session"]
+        cookie_names = ["access_token", "refresh_token", "auth_session", "csrf_token"]
         
         for cookie_name in cookie_names:
             response.delete_cookie(
@@ -184,11 +198,12 @@ class EnhancedAuthService:
         
         try:
             # Verify access token
-            payload = jwt.decode(
-                access_token,
-                settings.SECRET_KEY,
-                algorithms=[settings.ALGORITHM]
-            )
+            # Verify token; support RS256 when configured
+            algorithms = [getattr(settings, "JWT_SIGNING_ALG", settings.ALGORITHM)]
+            key = settings.SECRET_KEY
+            if algorithms[0].upper() == "RS256" and settings.JWT_PUBLIC_KEY:
+                key = settings.JWT_PUBLIC_KEY
+            payload = jwt.decode(access_token, key, algorithms=algorithms)
             
             logger.debug(f"Token decoded successfully: sub={payload.get('sub')}, user_id={payload.get('user_id')}")
             
@@ -282,11 +297,11 @@ class EnhancedAuthService:
             logger.info(f"Token refreshed successfully for user {user.id}")
             
             # Return new access token payload
-            new_payload = jwt.decode(
-                new_tokens["access_token"],
-                settings.SECRET_KEY,
-                algorithms=[settings.ALGORITHM]
-            )
+            algorithms = [getattr(settings, "JWT_SIGNING_ALG", settings.ALGORITHM)]
+            key = settings.SECRET_KEY
+            if algorithms[0].upper() == "RS256" and settings.JWT_PUBLIC_KEY:
+                key = settings.JWT_PUBLIC_KEY
+            new_payload = jwt.decode(new_tokens["access_token"], key, algorithms=algorithms)
             return new_payload
             
         except (JWTError, ValueError):

@@ -53,6 +53,14 @@ def get_password_hash(password: str) -> str:
     """Generate password hash."""
     return pwd_context.hash(password)
 
+def _get_signing_params() -> Dict[str, Any]:
+    """Return key and algorithm for JWT signing based on settings."""
+    alg = getattr(settings, "JWT_SIGNING_ALG", settings.ALGORITHM)
+    if alg.upper() == "RS256" and settings.JWT_PRIVATE_KEY:
+        return {"key": settings.JWT_PRIVATE_KEY, "algorithm": "RS256", "headers": {"kid": settings.JWT_KID} if settings.JWT_KID else {}}
+    return {"key": settings.SECRET_KEY, "algorithm": "HS256", "headers": {}}
+
+
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
     
@@ -70,7 +78,8 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
         "jti": f"access_{int(iat.timestamp())}_{hash(str(data))}",  # JWT ID
         "type": "access"  # Token type
     })
-    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    signing = _get_signing_params()
+    encoded_jwt = jwt.encode(to_encode, signing["key"], algorithm=signing["algorithm"], headers=signing["headers"])
     return encoded_jwt
 
 def create_refresh_token(data: dict, expires_days: Optional[int] = None) -> str:
@@ -88,7 +97,8 @@ def create_refresh_token(data: dict, expires_days: Optional[int] = None) -> str:
         "jti": f"refresh_{int(iat.timestamp())}_{hash(str(data))}",  # JWT ID
         "type": "refresh"  # Token type
     })
-    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    signing = _get_signing_params()
+    encoded_jwt = jwt.encode(to_encode, signing["key"], algorithm=signing["algorithm"], headers=signing["headers"])
     return encoded_jwt
 
 # Security alert functions

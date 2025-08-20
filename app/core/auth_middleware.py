@@ -9,6 +9,7 @@ import re
 from app.core.enhanced_auth import enhanced_auth_service
 from app.db.database import async_session
 from app.core.config import settings
+from app.utils.security import get_client_ip
 
 logger = logging.getLogger("auth_middleware")
 
@@ -145,6 +146,15 @@ class SessionAuthenticationMiddleware(BaseHTTPMiddleware):
             path.startswith("/openapi.json")):
             return await call_next(request)
         
+        # CSRF protection for cookie-only flows on state-changing requests
+        if settings.CSRF_ENABLED and request.method in ("POST", "PUT", "PATCH", "DELETE"):
+            auth_header = request.headers.get("Authorization", "")
+            if not auth_header.startswith("Bearer "):
+                csrf_header = request.headers.get(settings.CSRF_HEADER_NAME)
+                csrf_cookie = request.cookies.get("csrf_token")
+                if not csrf_header or not csrf_cookie or csrf_header != csrf_cookie:
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF token missing or invalid")
+
         # Create response and check/refresh auth
         response = await call_next(request)
         

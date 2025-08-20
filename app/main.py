@@ -64,6 +64,7 @@ app.add_middleware(
         "Authorization",
         "Content-Type", 
         "X-Refresh-Token",
+        settings.CSRF_HEADER_NAME,
         "X-App-Env",
         "X-Client-Version",
         "X-User-Timezone",
@@ -135,6 +136,9 @@ async def add_process_time_header(request: Request, call_next):
     response.headers["X-Process-Time"] = str(process_time)
     # Ensure caches vary on Origin for CORS
     response.headers["Vary"] = ", ".join(filter(None, [response.headers.get("Vary"), "Origin"]))
+    # Pass a CSRF header name so the client knows which header to use
+    if settings.CSRF_ENABLED:
+        response.headers["X-CSRF-Header-Name"] = settings.CSRF_HEADER_NAME
     return response
 
 # Security monitoring middleware - DISABLED for development performance

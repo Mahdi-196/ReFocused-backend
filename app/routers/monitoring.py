@@ -3,6 +3,7 @@ Monitoring endpoints for metrics and health checks.
 """
 
 from fastapi import APIRouter, Response, Depends
+from typing import Dict, Any
 from fastapi.responses import PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST
 
@@ -155,3 +156,34 @@ async def application_info():
         },
         "timestamp": time.time()
     } 
+
+
+@router.get("/.well-known/jwks.json")
+def jwks() -> Dict[str, Any]:
+    """Serve JWKS for RS256 if configured; empty otherwise."""
+    if getattr(settings, "JWT_SIGNING_ALG", settings.ALGORITHM).upper() != "RS256" or not settings.JWT_PUBLIC_KEY:
+        return {"keys": []}
+
+    try:
+        from jose.utils import base64url_encode
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.hazmat.backends import default_backend
+
+        public_key = serialization.load_pem_public_key(settings.JWT_PUBLIC_KEY.encode(), backend=default_backend())
+        if not isinstance(public_key, rsa.RSAPublicKey):
+            return {"keys": []}
+        numbers = public_key.public_numbers()
+        e = base64url_encode(numbers.e.to_bytes((numbers.e.bit_length() + 7) // 8, "big")).decode()
+        n = base64url_encode(numbers.n.to_bytes((numbers.n.bit_length() + 7) // 8, "big")).decode()
+        jwk = {
+            "kty": "RSA",
+            "alg": "RS256",
+            "use": "sig",
+            "kid": settings.JWT_KID or "refocused-rs256",
+            "n": n,
+            "e": e,
+        }
+        return {"keys": [jwk]}
+    except Exception:
+        return {"keys": []}
