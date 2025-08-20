@@ -332,7 +332,7 @@ class JournalEntry(Base):
     id = Column(Integer, primary_key=True)
     collection_id = Column(Integer, ForeignKey("journal_collections.id"), nullable=False, index=True)
     title = Column(String(200), nullable=False)
-    content = Column(Text, nullable=False)  # Rich text content
+    content = Column(Text, nullable=False, server_default="")  # Allow empty content
     is_encrypted = Column(Boolean, default=False, nullable=False)
     encrypted_content = Column(Text, nullable=True)  # AES encrypted content for private collections
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

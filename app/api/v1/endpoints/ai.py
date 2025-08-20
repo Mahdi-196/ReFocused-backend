@@ -8,12 +8,14 @@ from ....services.ai_service import ai_service
 from ....schemas.ai import (
     QuoteResponse, WordResponse, MindFuelResponse, ChatRequest, ChatResponse,
     ContentPopulationRequest, ContentPopulationResponse, AIErrorResponse,
-    WritingPromptsResponse, AiSuggestionsResponse, WeeklyThemeResponse
+    WritingPromptsResponse, AiSuggestionsResponse, WeeklyThemeResponse,
+    ChatQuotaResponse,
 )
 from ....core.auth import get_current_user
 from ....db.models import User
 from ....caching.redis_cache import cache
 from ....core.config import settings
+from ....utils.security import get_client_ip
 
 router = APIRouter()
 security = HTTPBearer()
@@ -23,17 +25,58 @@ logger = logging.getLogger(__name__)
 _ip_counts_fallback = {}
 
 def _get_client_ip(request: Request) -> str:
-    """Best-effort client IP extraction (X-Forwarded-For first, then socket)."""
-    xf = request.headers.get("x-forwarded-for")
-    if xf:
-        return xf.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    return get_client_ip(request)
 
 def _seconds_until_midnight_utc() -> int:
     """Seconds remaining until next UTC midnight."""
     now = datetime.now(timezone.utc)
     reset = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
     return int((reset - now).total_seconds())
+
+@router.get(
+    "/chat/quota",
+    response_model=ChatQuotaResponse,
+    summary="Get AI chat quotas",
+    description="Return remaining and reset seconds for user and IP daily chat quotas"
+)
+async def get_chat_quota(
+    request: Request,
+    current_user: User = Depends(get_current_user)
+) -> ChatQuotaResponse:
+    ip_limit = settings.AI_CHAT_DAILY_LIMIT
+    user_limit = settings.AI_CHAT_DAILY_LIMIT
+    ip = _get_client_ip(request)
+    date_key = datetime.now(timezone.utc).date().isoformat()
+    ip_key = f"ai:chat:ip:{ip}:{date_key}"
+    user_key = f"ai:chat:user:{current_user.id}:{date_key}"
+    ttl_hint = _seconds_until_midnight_utc()
+
+    ip_count = 0
+    user_count = 0
+    ip_ttl = ttl_hint
+    user_ttl = ttl_hint
+    if cache.enabled:
+        raw_ip = await cache.get(ip_key)
+        raw_user = await cache.get(user_key)
+        try:
+            ip_count = int(raw_ip) if raw_ip is not None else 0
+        except Exception:
+            ip_count = 0
+        try:
+            user_count = int(raw_user) if raw_user is not None else 0
+        except Exception:
+            user_count = 0
+        t1 = await cache.get_ttl(ip_key)
+        t2 = await cache.get_ttl(user_key)
+        ip_ttl = t1 if t1 is not None else ttl_hint
+        user_ttl = t2 if t2 is not None else ttl_hint
+
+    return ChatQuotaResponse(
+        user_remaining=max(0, user_limit - user_count),
+        user_reset_seconds=user_ttl,
+        ip_remaining=max(0, ip_limit - ip_count),
+        ip_reset_seconds=ip_ttl,
+    )
 
 @router.get(
     "/quote-of-day", 
@@ -156,39 +199,51 @@ async def ai_chat(
 ) -> ChatResponse:
     """Send message to AI chat via AWS Lambda with per-IP rate limiting"""
     try:
-        # Enforce per-IP daily quota (50/day)
-        limit = 50
+        # Enforce per-IP and per-user daily quotas
+        ip_limit = settings.AI_CHAT_DAILY_LIMIT
+        user_limit = settings.AI_CHAT_DAILY_LIMIT
         ip = _get_client_ip(request)
         date_key = datetime.now(timezone.utc).date().isoformat()
-        redis_key = f"ai:chat:ip:{ip}:{date_key}"
+        ip_key = f"ai:chat:ip:{ip}:{date_key}"
+        user_key = f"ai:chat:user:{current_user.id}:{date_key}"
         ttl_hint = _seconds_until_midnight_utc()
 
-        count = await cache.increment(redis_key, 1, ttl_hint) if cache.enabled else None
-        if count is None:
-            # Fallback: track in-memory for single-process runs
+        # Increment IP and user keys (if Redis enabled)
+        ip_count = await cache.increment(ip_key, 1, ttl_hint) if cache.enabled else None
+        user_count = await cache.increment(user_key, 1, ttl_hint) if cache.enabled else None
+        ttl_q_ip = await cache.get_ttl(ip_key) if cache.enabled else None
+        ttl_q_user = await cache.get_ttl(user_key) if cache.enabled else None
+        ip_ttl = ttl_q_ip if ttl_q_ip is not None else ttl_hint
+        user_ttl = ttl_q_user if ttl_q_user is not None else ttl_hint
+        ttl_seconds = min(ip_ttl, user_ttl)
+
+        # In fallback mode (no Redis), track only IP as before
+        if ip_count is None or user_count is None:
+            # Fallback: track in-memory for single-process runs (IP only)
             now_ts = datetime.now(timezone.utc).timestamp()
             rec = _ip_counts_fallback.get(ip)
             if not rec or now_ts >= rec["reset_at"]:
-                # reset at next midnight UTC
                 reset_dt = (datetime.now(timezone.utc) + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
                 rec = {"count": 0, "reset_at": reset_dt.timestamp()}
             rec["count"] += 1
             _ip_counts_fallback[ip] = rec
-            count = rec["count"]
-            ttl_seconds = max(1, int(rec["reset_at"] - now_ts))
-        else:
-            ttl_q = await cache.get_ttl(redis_key)
-            ttl_seconds = ttl_q if ttl_q is not None else ttl_hint
+            ip_count = rec["count"]
+            ip_ttl = max(1, int(rec["reset_at"] - now_ts))
+            user_count = 0
+            user_ttl = ttl_hint
+            ttl_seconds = min(ip_ttl, user_ttl)
 
-        if count > limit:
+        # Enforce both limits
+        if ip_count > ip_limit or user_count > user_limit:
             # Block and expose reset for frontend throttling
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Daily IP message limit exceeded (50 per day)",
+                detail="Daily message limit exceeded",
                 headers={"Retry-After": str(ttl_seconds)}
             )
 
-        ip_remaining = max(0, limit - count)
+        ip_remaining = max(0, ip_limit - ip_count)
+        user_remaining = max(0, user_limit - user_count)
 
         conversation_history = []
         if chat_request.conversation_history:
@@ -226,7 +281,9 @@ async def ai_chat(
             messages_remaining=result.get("messages_remaining", 0),
             usage=result.get("usage"),
             ip_remaining=ip_remaining,
-            ip_reset_seconds=ttl_seconds
+            ip_reset_seconds=ip_ttl,
+            user_remaining=user_remaining,
+            user_reset_seconds=user_ttl,
         )
         
     except HTTPException:

@@ -39,6 +39,9 @@ class FeatureVotingService:
             self.vote_url: str = f"{self.base_url}/vote"
             self.stats_url: str = f"{self.base_url}/stats"
 
+        # Keep logger.info only; remove console debug spam
+        logger.info("Voting service configured: vote_url=%s stats_url=%s", self.vote_url, self.stats_url)
+
     async def _post(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         url = f"{self.base_url}{path}"
         try:
@@ -66,12 +69,17 @@ class FeatureVotingService:
 
     async def _post_full(self, url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         try:
-            logger.info("Forwarding voting request to upstream: %s", url)
+            # Debug logging (single channel)
+            redacted_key = "[REDACTED]" if settings.VOTING_API_KEY else None
+            logger.info("Voting upstream request: url=%s payload=%s api_key=%s", url, payload, redacted_key)
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
                 headers = {"Content-Type": "application/json"}
                 if settings.VOTING_API_KEY:
                     headers["x-api-key"] = settings.VOTING_API_KEY
+                logger.info("Voting upstream headers: %s", {**headers, **({"x-api-key": "[REDACTED]"} if "x-api-key" in headers else {})})
                 response = await client.post(url, headers=headers, json=payload)
+                logger.info("Voting upstream response status: %s", response.status_code)
+                logger.info("Voting upstream response body preview: %s", response.text[:500])
                 response.raise_for_status()
                 data = response.json()
                 if isinstance(data, dict) and "body" in data:

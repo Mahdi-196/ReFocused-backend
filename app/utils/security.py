@@ -46,18 +46,15 @@ def is_private_ip(ip: str) -> bool:
         return False
 
 def get_client_ip(request: Request) -> str:
-    """Get the real client IP address, considering proxies."""
-    # Check for common proxy headers
-    forwarded_for = request.headers.get("X-Forwarded-For")
+    """Get the real client IP address, considering proxies (case-insensitive headers)."""
+    # Check for common proxy headers (normalize to lowercase)
+    headers = {k.lower(): v for k, v in request.headers.items()}
+    forwarded_for = headers.get("x-forwarded-for")
     if forwarded_for:
-        # Take the first IP in the chain
         return forwarded_for.split(",")[0].strip()
-    
-    real_ip = request.headers.get("X-Real-IP")
+    real_ip = headers.get("x-real-ip")
     if real_ip:
         return real_ip
-    
-    # Fallback to direct client IP
     return request.client.host if request.client else "unknown"
 
 def check_content_security(content: str) -> bool:

@@ -256,11 +256,11 @@ class JournalEntryCRUD:
                 detail="Title cannot be empty"
             )
         
-        if not entry.content or not entry.content.strip():
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Content cannot be empty"
-            )
+        # Allow empty content; normalize to empty string
+        if entry.content is None:
+            entry_content = ""
+        else:
+            entry_content = entry.content
         
         # Verify collection ownership
         collection = await JournalCollectionCRUD.get_by_id(db, entry.collection_id, user_id)
@@ -273,7 +273,7 @@ class JournalEntryCRUD:
         # Handle encryption for private collections
         is_encrypted = False
         encrypted_content = None
-        content = entry.content
+        content = entry_content
         
         # Use frontend's preference if provided, otherwise auto-determine based on collection
         if entry.is_encrypted is not None:

@@ -1,51 +1,54 @@
-from fastapi import APIRouter, HTTPException, Request, status, Depends
+from fastapi import APIRouter, HTTPException, Request, status
 import httpx
 from typing import Dict
+import logging
 
-from ....core.auth import get_current_user
-from ....db.models import User
 from ....services.feedback_service import feedback_service
 from ....schemas.feedback import FeedbackRequest, FeedbackResponse
+from ....caching.redis_cache import cache
+from ....core.config import settings
+from ....utils.security import get_client_ip
 
 
 router = APIRouter()
 
 
-def _client_ip(request: Request) -> str:
-    xf = request.headers.get("x-forwarded-for")
-    if xf:
-        return xf.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+def _seconds_until_midnight_utc() -> int:
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    reset = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return int((reset - now).total_seconds())
 
 
 @router.post("/feedback", response_model=FeedbackResponse, summary="Submit feedback")
 async def submit_feedback(
     payload: FeedbackRequest,
     request: Request,
-    current_user: User = Depends(get_current_user),
 ) -> FeedbackResponse:
     try:
-        # Rate limit: 50 submissions/day per IP (in-memory only)
-        limit = 50
-        ip = _client_ip(request)
-        from datetime import datetime, timezone, timedelta
-        now = datetime.now(timezone.utc)
-        reset_dt = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-        now_ts = now.timestamp()
-        # simple module-level counter map
-        global _feedback_ip_counts
-        try:
-            _feedback_ip_counts  # type: ignore[name-defined]
-        except NameError:
-            _feedback_ip_counts = {}
-        rec = _feedback_ip_counts.get(ip)
-        if not rec or now_ts >= rec["reset_at"]:
-            rec = {"count": 0, "reset_at": reset_dt.timestamp()}
-        rec["count"] += 1
-        _feedback_ip_counts[ip] = rec
-        count = rec["count"]
-        ttl_seconds = max(1, int(rec["reset_at"] - now_ts))
-        if count > limit:
+        # Daily IP limit (count only successful submissions)
+        ip_limit = settings.FEEDBACK_DAILY_LIMIT
+        ip = get_client_ip(request)
+        from datetime import datetime, timezone
+        date_key = datetime.now(timezone.utc).date().isoformat()
+        ip_key = f"feedback:ip:{ip}:{date_key}"
+        ttl_hint = _seconds_until_midnight_utc()
+
+        # Read current count without incrementing
+        ip_count_current = 0
+        if cache.enabled:
+            raw = await cache.get(ip_key)
+            try:
+                ip_count_current = int(raw) if raw is not None else 0
+            except Exception:
+                ip_count_current = 0
+            ttl_q = await cache.get_ttl(ip_key)
+            ttl_seconds = ttl_q if ttl_q is not None else ttl_hint
+        else:
+            ttl_seconds = ttl_hint
+
+        if ip_count_current >= ip_limit:
+            # Already reached the daily successful-submission limit
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Too many feedback submissions today",
@@ -55,7 +58,19 @@ async def submit_feedback(
         # Forward to AWS
         result: Dict = await feedback_service.submit(payload.model_dump())
         status_text = str(result.get("status", "ok"))
+
+        # Increment only after successful upstream submission
+        if cache.enabled:
+            try:
+                await cache.increment(ip_key, 1, ttl_hint)
+            except Exception:
+                # Non-fatal: don't block response if cache increment fails
+                logging.getLogger(__name__).warning("Feedback RL increment failed for %s", ip_key)
+
         return FeedbackResponse(status=status_text, feedbackId=result.get("feedbackId"), message=result.get("message"))
+    except HTTPException:
+        # Preserve explicit 4xx
+        raise
     except httpx.HTTPStatusError as e:
         # Preserve upstream status and body for transparency
         code = e.response.status_code if e.response is not None else status.HTTP_502_BAD_GATEWAY

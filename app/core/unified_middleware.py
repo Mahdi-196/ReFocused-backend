@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.utils.security import get_client_ip, validate_content_type
 from app.db.database import async_session
 from app.core.auth import get_current_user_from_token
+from app.caching.redis_cache import cache
 
 logger = logging.getLogger("security")
 
@@ -54,9 +55,20 @@ class UnifiedSecurityMiddleware(BaseHTTPMiddleware):
         #     else:
         #         del self.ip_blocklist[client_ip]
         
-        # 2. Rate Limiting - DISABLED
-        # if not self._check_rate_limit(client_ip):
-        #     return self._rate_limit_response()
+        # 2. Global Rate Limiting (token bucket via Redis if enabled)
+        if settings.RATE_LIMIT_ENABLED:
+            limited, retry_after = await self._check_token_bucket(client_ip)
+            if limited:
+                return Response(
+                    content='{"detail": "Rate limit exceeded"}',
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    media_type="application/json",
+                    headers={
+                        "Retry-After": str(retry_after),
+                        settings.API_RATE_LIMIT_HEADER: str(settings.GLOBAL_RATE_LIMIT_CAPACITY),
+                        settings.API_RATE_LIMIT_RESET: str(int(time.time() + retry_after)),
+                    },
+                )
         
         # 3. Request Validation
         validation_response = await self._validate_request(request, client_ip)
@@ -85,10 +97,53 @@ class UnifiedSecurityMiddleware(BaseHTTPMiddleware):
         
         return response
     
-    def _check_rate_limit(self, client_ip: str) -> bool:
-        """Check rate limit for client IP."""
-        # COMPLETELY DISABLED - always allow requests
-        return True
+    async def _check_token_bucket(self, client_ip: str) -> tuple[bool, int]:
+        """Redis-backed token bucket. Returns (is_limited, retry_after_seconds)."""
+        capacity = settings.GLOBAL_RATE_LIMIT_CAPACITY
+        refill_rate = settings.GLOBAL_RATE_LIMIT_REFILL_RATE
+
+        # Keys
+        key_tokens = f"rl:bucket:ip:{client_ip}:tokens"
+        key_ts = f"rl:bucket:ip:{client_ip}:ts"
+
+        now = time.time()
+        retry_after_seconds = 1
+
+        if cache.enabled:
+            # Load current state
+            raw_tokens = await cache.get(key_tokens)
+            raw_ts = await cache.get(key_ts)
+
+            try:
+                tokens = float(raw_tokens) if raw_tokens is not None else float(capacity)
+            except Exception:
+                tokens = float(capacity)
+            try:
+                last_ts = float(raw_ts) if raw_ts is not None else now
+            except Exception:
+                last_ts = now
+
+            # Refill
+            elapsed = max(0.0, now - last_ts)
+            tokens = min(float(capacity), tokens + elapsed * float(refill_rate))
+
+            if tokens < 1.0:
+                # Compute wait time until 1 token
+                need = 1.0 - tokens
+                retry_after_seconds = max(1, int(need / float(refill_rate))) if refill_rate > 0 else 1
+                # Persist updated timestamp so future refills work
+                await cache.set(key_ts, str(now), ttl=3600, serialize_method="pickle")
+                await cache.set(key_tokens, str(tokens), ttl=3600, serialize_method="pickle")
+                return True, retry_after_seconds
+
+            # Consume one token
+            tokens -= 1.0
+            await cache.set(key_ts, str(now), ttl=3600, serialize_method="pickle")
+            await cache.set(key_tokens, str(tokens), ttl=3600, serialize_method="pickle")
+            return False, 0
+
+        # Fallback: no Redis, allow traffic (development single-process can opt to add in-memory if desired)
+        return False, 0
     
     async def _validate_request(self, request: Request, client_ip: str) -> Response | None:
         """Validate request size and content type."""

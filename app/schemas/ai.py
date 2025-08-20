@@ -49,6 +49,15 @@ class ChatResponse(BaseModel):
     usage: Optional[Dict[str, Any]] = Field(None, description="Token usage information")
     ip_remaining: int = Field(..., description="Remaining messages for this IP today (max 50)")
     ip_reset_seconds: int = Field(..., description="Seconds until this IP quota resets")
+    user_remaining: int = Field(..., description="Remaining messages for this user today")
+    user_reset_seconds: int = Field(..., description="Seconds until this user quota resets")
+
+
+class ChatQuotaResponse(BaseModel):
+    user_remaining: int = Field(..., description="Remaining messages for this user today")
+    user_reset_seconds: int = Field(..., description="Seconds until user quota resets")
+    ip_remaining: int = Field(..., description="Remaining messages for this IP today")
+    ip_reset_seconds: int = Field(..., description="Seconds until IP quota resets")
 
 class ContentPopulationRequest(BaseModel):
     data_type: str = Field(

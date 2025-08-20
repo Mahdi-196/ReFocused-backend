@@ -6,16 +6,22 @@ from ....core.auth import get_current_user
 from ....db.models import User
 from ....services.voting_service import voting_service
 from ....schemas.voting import VoteRequest, VoteResponse, VoteStatsResponse, FeatureTallyItem
+from ....utils.security import get_client_ip
+from ....caching.redis_cache import cache
+from ....core.config import settings
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, text as sql_text
+from ....db.database import get_db
 
 
 router = APIRouter()
 
 
-def _client_ip(request: Request) -> str:
-    xf = request.headers.get("x-forwarded-for")
-    if xf:
-        return xf.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+def _seconds_until_midnight_utc() -> int:
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    reset = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return int((reset - now).total_seconds())
 
 _ip_counts_fallback: dict[str, dict] = {}
 
@@ -25,29 +31,38 @@ async def cast_vote(
     payload: VoteRequest,
     request: Request,
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> VoteResponse:
     try:
-        # Simple IP+day rate limit (in-memory only)
-        limit = 100
-        ip = _client_ip(request)
-        from datetime import datetime, timezone, timedelta
-        now = datetime.now(timezone.utc)
-        reset_dt = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-        now_ts = now.timestamp()
-        rec = _ip_counts_fallback.get(ip)
-        if not rec or now_ts >= rec["reset_at"]:
-            rec = {"count": 0, "reset_at": reset_dt.timestamp()}
-        rec["count"] += 1
-        _ip_counts_fallback[ip] = rec
-        count = rec["count"]
-        ttl_seconds = max(1, int(rec["reset_at"] - now_ts))
-
-        if count > limit:
+        # Soft IP+day limit via Redis
+        ip_limit = settings.VOTING_IP_DAILY_LIMIT
+        ip = get_client_ip(request)
+        from datetime import datetime, timezone
+        date_key = datetime.now(timezone.utc).date().isoformat()
+        ip_key = f"voting:ip:{ip}:{date_key}"
+        ttl_hint = _seconds_until_midnight_utc()
+        ip_count = await cache.increment(ip_key, 1, ttl_hint) if cache.enabled else 1
+        ttl_seconds = await cache.get_ttl(ip_key) if cache.enabled else ttl_hint
+        ttl_seconds = ttl_seconds if ttl_seconds is not None else ttl_hint
+        if ip_count > ip_limit:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Too many voting requests today",
                 headers={"Retry-After": str(ttl_seconds)},
             )
+
+        # Enforce one vote per account (Redis fast-path + Postgres authoritative)
+        # 1) Redis fast-path
+        voted_key = f"voted:user:{current_user.id}"
+        if cache.enabled and await cache.exists(voted_key):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="You have already voted")
+
+        # 2) Postgres authoritative check
+        exists_sql = sql_text("SELECT 1 FROM user_feature_votes WHERE user_id = :uid LIMIT 1")
+        res = await db.execute(exists_sql, {"uid": current_user.id})
+        row = res.first()
+        if row is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="You have already voted")
 
         # Determine voteId: prefer predefined slug; otherwise use trimmed custom
         if payload.feature:
@@ -56,6 +71,15 @@ async def cast_vote(
             vote_id = payload.custom.strip()  # validated length <= 600
 
         result = await voting_service.cast_vote(vote_id=vote_id)
+
+        # Record the vote (idempotent constraint on user_id handled in migration)
+        insert_sql = sql_text("INSERT INTO user_feature_votes (user_id, vote_id) VALUES (:uid, :vid) ON CONFLICT (user_id) DO NOTHING")
+        await db.execute(insert_sql, {"uid": current_user.id, "vid": vote_id})
+        await db.commit()
+
+        # Mark in Redis (long TTL for practical permanence)
+        if cache.enabled:
+            await cache.set(voted_key, 1, ttl=315360000)  # ~10 years
         return VoteResponse(
             status=str(result.get("status", "ok")),
             message=result.get("message"),
@@ -63,8 +87,8 @@ async def cast_vote(
         )
     except httpx.HTTPStatusError as e:
         code = e.response.status_code if e.response is not None else status.HTTP_502_BAD_GATEWAY
-        text = e.response.text if e.response is not None else "Upstream error"
-        raise HTTPException(status_code=code, detail=text)
+        resp_text = e.response.text if e.response is not None else "Upstream error"
+        raise HTTPException(status_code=code, detail=resp_text)
     except HTTPException:
         raise
     except Exception as e:
@@ -86,4 +110,27 @@ async def vote_stats(
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Voting upstream error: {e}")
 
+
+@router.get("/me", summary="Check if current user has voted")
+async def has_voted(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    try:
+        # Fast-path via Redis flag
+        voted_key = f"voted:user:{current_user.id}"
+        if cache.enabled and await cache.exists(voted_key):
+            return {"voted": True}
+
+        # Authoritative DB check
+        exists_sql = sql_text("SELECT vote_id FROM user_feature_votes WHERE user_id = :uid LIMIT 1")
+        res = await db.execute(exists_sql, {"uid": current_user.id})
+        row = res.first()
+        if row is not None:
+            # row[0] is vote_id
+            return {"voted": True, "vote_id": str(row[0]) if row[0] is not None else None}
+        return {"voted": False}
+    except Exception:
+        # On any storage error, default to not voted rather than breaking UI
+        return {"voted": False}
 

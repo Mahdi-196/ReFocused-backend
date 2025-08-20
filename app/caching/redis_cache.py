@@ -15,8 +15,9 @@ from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from app.core.config import settings
+import platform
 from app.monitoring.logging_config import get_logger
-from app.monitoring.metrics import metrics
+from app.monitoring.metrics import CACHE_HITS, CACHE_MISSES
 
 logger = get_logger("cache")
 
@@ -34,18 +35,24 @@ class RedisCache:
     def _setup_connection(self):
         """Setup Redis connection with proper configuration."""
         try:
-            self._connection_pool = redis.ConnectionPool.from_url(
-                settings.REDIS_URL,
+            pool_kwargs = dict(
                 encoding="utf-8",
                 decode_responses=False,  # We handle serialization manually
                 retry_on_timeout=True,
                 socket_keepalive=True,
-                socket_keepalive_options={
+                max_connections=20,
+            )
+            # Avoid invalid keepalive options on non-Linux platforms
+            if platform.system() == "Linux":
+                pool_kwargs["socket_keepalive_options"] = {
                     1: 1,  # TCP_KEEPIDLE
-                    2: 3,  # TCP_KEEPINTVL  
+                    2: 3,  # TCP_KEEPINTVL
                     3: 5,  # TCP_KEEPCNT
-                },
-                max_connections=20
+                }
+
+            self._connection_pool = redis.ConnectionPool.from_url(
+                settings.REDIS_URL,
+                **pool_kwargs,
             )
             self._redis = redis.Redis(connection_pool=self._connection_pool)
             logger.info("Redis cache initialized successfully")
@@ -63,7 +70,7 @@ class RedisCache:
             
             cached_data = await self._redis.get(key)
             if cached_data is None:
-                metrics.CACHE_MISSES.labels(cache_type="redis").inc()
+                CACHE_MISSES.labels(cache_type="redis").inc()
                 return None
             
             # Deserialize based on data type marker
@@ -76,14 +83,14 @@ class RedisCache:
                 result = cached_data.decode('utf-8')
             
             duration = asyncio.get_event_loop().time() - start_time
-            metrics.CACHE_HITS.labels(cache_type="redis").inc()
-            
-            logger.debug(f"Cache hit for key: {key[:50]}... (duration: {duration:.3f}s)")
+            CACHE_HITS.labels(cache_type="redis").inc()
+            if settings.REDIS_CACHE_DEBUG:
+                logger.debug(f"Cache hit for key: {key[:50]}... (duration: {duration:.3f}s)")
             return result
             
         except (RedisError, json.JSONDecodeError, pickle.PickleError) as e:
             logger.warning(f"Cache get error for key {key}: {e}")
-            metrics.CACHE_MISSES.labels(cache_type="redis").inc()
+            CACHE_MISSES.labels(cache_type="redis").inc()
             return None
         except Exception as e:
             logger.error(f"Unexpected cache error for key {key}: {e}")
@@ -117,11 +124,12 @@ class RedisCache:
             await self._redis.setex(key, ttl, serialized)
             
             duration = asyncio.get_event_loop().time() - start_time
-            logger.debug(f"Cache set for key: {key[:50]}... (duration: {duration:.3f}s, ttl: {ttl}s)")
+            if settings.REDIS_CACHE_DEBUG:
+                logger.debug(f"Cache set for key: {key[:50]}... (duration: {duration:.3f}s, ttl: {ttl}s)")
             
             return True
             
-        except (RedisError, json.JSONEncodeError, pickle.PickleError) as e:
+        except (RedisError, TypeError, pickle.PickleError) as e:
             logger.warning(f"Cache set error for key {key}: {e}")
             return False
         except Exception as e:
@@ -135,7 +143,8 @@ class RedisCache:
         
         try:
             result = await self._redis.delete(key)
-            logger.debug(f"Cache delete for key: {key[:50]}...")
+            if settings.REDIS_CACHE_DEBUG:
+                logger.debug(f"Cache delete for key: {key[:50]}...")
             return result > 0
         except RedisError as e:
             logger.warning(f"Cache delete error for key {key}: {e}")
@@ -150,7 +159,8 @@ class RedisCache:
             keys = await self._redis.keys(pattern)
             if keys:
                 result = await self._redis.delete(*keys)
-                logger.debug(f"Cache delete pattern {pattern}: {result} keys deleted")
+                if settings.REDIS_CACHE_DEBUG:
+                    logger.debug(f"Cache delete pattern {pattern}: {result} keys deleted")
                 return result
             return 0
         except RedisError as e:

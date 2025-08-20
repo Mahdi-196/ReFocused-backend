@@ -33,7 +33,7 @@ class JournalCollection(JournalCollectionBase):
 # Simple journal entry schemas  
 class JournalEntryBase(BaseModel):
     title: str
-    content: str
+    content: Optional[str] = None
 
 class JournalEntryCreate(JournalEntryBase):
     collection_id: int

@@ -1,10 +1,14 @@
 from fastapi import APIRouter, HTTPException, status, Request
 import httpx
+import logging
 
 from app.api.v1.endpoints import auth, goals, users, study, statistics, journal, admin, ai, voting, feedback
 from app.routers import monitoring, habits, streak, mood, dashboard, calendar, time
 from pydantic import BaseModel, EmailStr
 from app.services.email_service import email_service
+from app.caching.redis_cache import cache
+from app.core.config import settings
+from app.utils.security import get_client_ip
 
 api_router = APIRouter()
 
@@ -33,10 +37,42 @@ class EmailRequest(BaseModel):
     email: EmailStr
 
 
+def _seconds_until_midnight_utc() -> int:
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    reset = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return int((reset - now).total_seconds())
+
+
 @api_router.post("/email/refocusedSubscribe", tags=["email"], summary="Subscribe (proxied)")
 async def proxy_email_subscribe(payload: EmailRequest, request: Request) -> dict:
     try:
+        # Per-IP daily limit
+        ip_limit = settings.EMAIL_SUBSCRIPTION_DAILY_LIMIT
+        ip = get_client_ip(request)
+        from datetime import datetime, timezone
+        date_key = datetime.now(timezone.utc).date().isoformat()
+        # Unified key so subscribe+unsubscribe share the same daily budget
+        ip_key = f"email:actions:ip:{ip}:{date_key}"
+        ttl_hint = _seconds_until_midnight_utc()
+        ip_count = await cache.increment(ip_key, 1, ttl_hint) if cache.enabled else 1
+        ttl_seconds = await cache.get_ttl(ip_key) if cache.enabled else ttl_hint
+        ttl_seconds = ttl_seconds if ttl_seconds is not None else ttl_hint
+        logging.getLogger(__name__).debug(
+            "email_subscribe_rl ip=%s key=%s count=%s limit=%s ttl=%s",
+            ip, ip_key, ip_count, ip_limit, ttl_seconds
+        )
+        if ip_count > ip_limit:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many subscription attempts today",
+                headers={"Retry-After": str(ttl_seconds)},
+            )
+
         return await email_service.subscribe(payload.email)
+    except HTTPException:
+        # Preserve 429 or any explicit errors we raised above
+        raise
     except httpx.HTTPStatusError as e:
         code = e.response.status_code if e.response is not None else 502
         text = e.response.text if e.response is not None else "Upstream error"
@@ -48,7 +84,30 @@ async def proxy_email_subscribe(payload: EmailRequest, request: Request) -> dict
 @api_router.post("/email/unsubscribe", tags=["email"], summary="Unsubscribe (proxied)")
 async def proxy_email_unsubscribe(payload: EmailRequest, request: Request) -> dict:
     try:
+        # Apply same per-IP daily limit to unsubscribe so total actions <= limit
+        ip_limit = settings.EMAIL_SUBSCRIPTION_DAILY_LIMIT
+        ip = get_client_ip(request)
+        from datetime import datetime, timezone
+        date_key = datetime.now(timezone.utc).date().isoformat()
+        ip_key = f"email:actions:ip:{ip}:{date_key}"
+        ttl_hint = _seconds_until_midnight_utc()
+        ip_count = await cache.increment(ip_key, 1, ttl_hint) if cache.enabled else 1
+        ttl_q = await cache.get_ttl(ip_key) if cache.enabled else None
+        ttl_seconds = ttl_q if ttl_q is not None else ttl_hint
+        logging.getLogger(__name__).debug(
+            "email_unsubscribe_rl ip=%s key=%s count=%s limit=%s ttl=%s",
+            ip, ip_key, ip_count, ip_limit, ttl_seconds
+        )
+        if ip_count > ip_limit:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many email list actions today",
+                headers={"Retry-After": str(ttl_seconds)},
+            )
         return await email_service.unsubscribe(payload.email)
+    except HTTPException:
+        # Preserve explicit 4xx (e.g., 429) from our rate limiter
+        raise
     except httpx.HTTPStatusError as e:
         code = e.response.status_code if e.response is not None else 502
         text = e.response.text if e.response is not None else "Upstream error"

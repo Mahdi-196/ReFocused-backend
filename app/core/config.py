@@ -62,6 +62,7 @@ class Settings(BaseSettings):
     
     # Redis Configuration
     REDIS_URL: str = Field("redis://localhost:6379/1", env="REDIS_URL")
+    REDIS_CACHE_DEBUG: bool = Field(False, env="REDIS_CACHE_DEBUG")
     
     # Celery Configuration
     CELERY_BROKER_URL: str = Field("redis://localhost:6379/0", env="CELERY_BROKER_URL")
@@ -80,6 +81,18 @@ class Settings(BaseSettings):
     RATE_LIMIT_ENABLED: bool = Field(True, env="RATE_LIMIT_ENABLED")
     RATE_LIMIT_MAX_REQUESTS: int = Field(500, env="RATE_LIMIT_MAX_REQUESTS")  # per window
     RATE_LIMIT_WINDOW_SECONDS: int = Field(60, env="RATE_LIMIT_WINDOW_SECONDS")  # 1 minute
+
+    # Global token-bucket limiter (middleware)
+    GLOBAL_RATE_LIMIT_CAPACITY: int = Field(120, env="GLOBAL_RATE_LIMIT_CAPACITY")
+    GLOBAL_RATE_LIMIT_REFILL_RATE: float = Field(2.0, env="GLOBAL_RATE_LIMIT_REFILL_RATE")  # tokens per second
+
+    # Feature quotas
+    AI_CHAT_DAILY_LIMIT: int = Field(50, env="AI_CHAT_DAILY_LIMIT")
+    FEEDBACK_DAILY_LIMIT: int = Field(1, env="FEEDBACK_DAILY_LIMIT")
+    VOTING_IP_DAILY_LIMIT: int = Field(20, env="VOTING_IP_DAILY_LIMIT")
+
+    # Email subscription limits
+    EMAIL_SUBSCRIPTION_DAILY_LIMIT: int = Field(4, env="EMAIL_SUBSCRIPTION_DAILY_LIMIT")
 
     # Rate‑limit headers
     API_RATE_LIMIT_REMAINING: str = Field("X-RateLimit-Remaining", env="API_RATE_LIMIT_REMAINING")
