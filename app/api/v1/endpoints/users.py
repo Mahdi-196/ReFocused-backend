@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any, Optional, Literal
 from datetime import datetime
 import traceback
 import logging
@@ -21,6 +21,8 @@ from app.core.security import log_security_event
 from app.core.auth import get_current_user, jwt_required, oauth2_scheme
 from app.db.database import get_db
 from app.db.models import User, Goal2Week, GoalLongTerm, Habit, MoodEntry
+from app.caching.redis_cache import cache
+import json
 from app.schemas.user import UserResponse, UserProfile, UserUpdate, AccountDeleteRequest, AvatarUpdateRequest, AvatarResponse, AvatarConfig
 from datetime import date
 from app.core.security import verify_password
@@ -46,6 +48,69 @@ class UserStats(BaseModel):
     habits_total: int
     mood_entries_count: int
     account_age_days: int
+class TutorialStatusResponse(BaseModel):
+    signupCompleted: bool
+    googleCompleted: bool
+
+class TutorialUpdateRequest(BaseModel):
+    method: Literal['signup', 'google']
+
+
+@router.get("/tutorial", response_model=TutorialStatusResponse)
+async def get_tutorial_status(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> TutorialStatusResponse:
+    """Return per-user tutorial completion flags.
+    Server-side storage via Redis; defaults to false if not set.
+    """
+    signup_completed = False
+    google_completed = False
+    if cache.enabled:
+        key = f"tutorial:user:{current_user.id}"
+        raw = await cache.get(key)
+        if isinstance(raw, dict):
+            data = raw
+        else:
+            try:
+                data = json.loads(raw) if raw else {}
+            except Exception:
+                data = {}
+        signup_completed = bool(data.get("signupCompleted", False))
+        google_completed = bool(data.get("googleCompleted", False))
+    return TutorialStatusResponse(signupCompleted=signup_completed, googleCompleted=google_completed)
+
+
+@router.post("/tutorial", response_model=TutorialStatusResponse)
+async def set_tutorial_status(
+    payload: TutorialUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> TutorialStatusResponse:
+    """Mark the specified tutorial method as completed for the current user.
+    Idempotent: setting an already-completed flag is a no-op.
+    """
+    signup_completed = False
+    google_completed = False
+    if cache.enabled:
+        key = f"tutorial:user:{current_user.id}"
+        raw = await cache.get(key)
+        try:
+            data = json.loads(raw) if raw else {}
+        except Exception:
+            data = {}
+        # Update the requested flag
+        if payload.method == 'signup':
+            data['signupCompleted'] = True
+        elif payload.method == 'google':
+            data['googleCompleted'] = True
+        # Normalize booleans
+        signup_completed = bool(data.get('signupCompleted', False))
+        google_completed = bool(data.get('googleCompleted', False))
+        # Persist without TTL (long-lived)
+        await cache.set(key, json.dumps({'signupCompleted': signup_completed, 'googleCompleted': google_completed}))
+    return TutorialStatusResponse(signupCompleted=signup_completed, googleCompleted=google_completed)
+
 
 
 @router.get("/me", response_model=UserProfile)
