@@ -59,6 +59,10 @@ class EnhancedAuthService:
         
         # Calculate cookie max age based on remember_me setting
         max_age = settings.COOKIE_MAX_AGE if tokens.get("remember_me") else settings.SESSION_EXPIRE_MINUTES * 60
+        # In dev over HTTP, browsers reject SameSite=None without Secure. Fallback to Lax when not secure.
+        samesite_value = settings.COOKIE_SAMESITE
+        if (samesite_value or "").lower() == "none" and not settings.COOKIE_SECURE:
+            samesite_value = "lax"
         
         # Set access token cookie
         response.set_cookie(
@@ -67,7 +71,7 @@ class EnhancedAuthService:
             max_age=max_age,
             httponly=settings.COOKIE_HTTPONLY,
             secure=settings.COOKIE_SECURE,
-            samesite=settings.COOKIE_SAMESITE,
+            samesite=samesite_value,
             domain=settings.COOKIE_DOMAIN,
             path=settings.COOKIE_PATH
         )
@@ -79,7 +83,7 @@ class EnhancedAuthService:
             max_age=tokens["refresh_expires_in"],
             httponly=True,  # Always HTTP-only for refresh tokens
             secure=settings.COOKIE_SECURE,
-            samesite=settings.COOKIE_SAMESITE,
+            samesite=samesite_value,
             domain=settings.COOKIE_DOMAIN,
             path=settings.COOKIE_PATH
         )
@@ -91,7 +95,7 @@ class EnhancedAuthService:
             max_age=max_age,
             httponly=False,  # Frontend needs to read this
             secure=settings.COOKIE_SECURE,
-            samesite=settings.COOKIE_SAMESITE,
+            samesite=samesite_value,
             domain=settings.COOKIE_DOMAIN,
             path=settings.COOKIE_PATH
         )
@@ -106,7 +110,7 @@ class EnhancedAuthService:
                 domain=settings.COOKIE_DOMAIN,
                 path=settings.COOKIE_PATH,
                 secure=settings.COOKIE_SECURE,
-                samesite=settings.COOKIE_SAMESITE
+                samesite=("lax" if (settings.COOKIE_SAMESITE or "").lower() == "none" and not settings.COOKIE_SECURE else settings.COOKIE_SAMESITE)
             )
     
     def extract_token_from_request(self, request: Request) -> Optional[str]:
@@ -124,8 +128,8 @@ class EnhancedAuthService:
         
         return None
     
-    def extract_refresh_token_from_request(self, request: Request) -> Optional[str]:
-        """Extract refresh token from request."""
+    async def extract_refresh_token_from_request(self, request: Request) -> Optional[str]:
+        """Extract refresh token from cookies, header, or JSON body (fallback)."""
         
         # Try cookies first
         token = request.cookies.get("refresh_token")
@@ -133,7 +137,24 @@ class EnhancedAuthService:
             return token
         
         # Fallback to custom header
-        return request.headers.get("X-Refresh-Token")
+        header_token = request.headers.get("X-Refresh-Token")
+        if header_token:
+            return header_token
+
+        # Final fallback: JSON body
+        try:
+            if request.method in ("POST", "PUT"):
+                content_type = request.headers.get("content-type", "").lower()
+                if "application/json" in content_type:
+                    data = await request.json()
+                    body_token = data.get("refresh_token") if isinstance(data, dict) else None
+                    if body_token:
+                        return body_token
+        except Exception:
+            # Ignore body parsing errors
+            pass
+
+        return None
     
     async def verify_and_refresh_if_needed(
         self, 
@@ -211,7 +232,7 @@ class EnhancedAuthService:
     ) -> Optional[Dict[str, Any]]:
         """Handle token refresh flow."""
         
-        refresh_token = self.extract_refresh_token_from_request(request)
+        refresh_token = await self.extract_refresh_token_from_request(request)
         if not refresh_token:
             return None
         

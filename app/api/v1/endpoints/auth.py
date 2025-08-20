@@ -294,7 +294,12 @@ async def enhanced_refresh_token(
     
     # Get user info for response
     try:
-        user_id = int(payload.get("sub"))
+        # Access token payload contains both 'sub' (email) and 'user_id'
+        user_id = payload.get("user_id")
+        if isinstance(user_id, str):
+            user_id = int(user_id) if user_id.isdigit() else None
+        if not isinstance(user_id, int):
+            raise ValueError("user_id missing in token payload")
         result = await db.execute(select(User).where(User.id == user_id))
         user = result.scalar_one_or_none()
         
@@ -325,6 +330,15 @@ async def enhanced_refresh_token(
             detail="Invalid token payload"
         )
 
+
+@router.post("/refresh-token", response_model=EnhancedTokenResponse)
+async def enhanced_refresh_token_alias(
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db)
+) -> Any:
+    """Alias for clients calling /auth/refresh-token; delegates to refresh."""
+    return await enhanced_refresh_token(request, response, db)
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register(data: RegisterSchema, response: Response, db: AsyncSession = Depends(get_db)) -> Any:

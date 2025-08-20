@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     # Cookie Settings
     COOKIE_SECURE: bool = Field(False, env="COOKIE_SECURE")  # Set to True in production with HTTPS
     COOKIE_HTTPONLY: bool = Field(True, env="COOKIE_HTTPONLY")
-    COOKIE_SAMESITE: str = Field("lax", env="COOKIE_SAMESITE")  # lax, strict, none
+    COOKIE_SAMESITE: str = Field("none", env="COOKIE_SAMESITE")  # lax, strict, none
     COOKIE_DOMAIN: Optional[str] = Field(None, env="COOKIE_DOMAIN")
     COOKIE_PATH: str = Field("/", env="COOKIE_PATH")
     COOKIE_MAX_AGE: int = Field(86400 * 30, env="COOKIE_MAX_AGE")  # 30 days

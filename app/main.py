@@ -97,6 +97,10 @@ app.include_router(monitoring_router)  # Mount monitoring at root level
 
 # Email subscription endpoints removed; using AWS API Gateway + Lambda directly
 
+# Root-level auth refresh alias for clients calling /auth/refresh
+from app.api.v1.endpoints.auth import enhanced_refresh_token as _refresh_handler
+app.add_api_route("/auth/refresh", _refresh_handler, methods=["POST"], tags=["auth"])  # delegates to /api/v1/auth/refresh handler
+
 # Google OAuth COOP middleware - Fixed to properly handle OAuth flows
 @app.middleware("http")
 async def google_oauth_coop_middleware(request: Request, call_next):
