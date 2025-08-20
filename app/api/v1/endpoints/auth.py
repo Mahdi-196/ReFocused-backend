@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, Dict
 
 from fastapi import APIRouter, Request, Depends, HTTPException, status, Response
@@ -25,6 +25,8 @@ from app.services.google_oauth import GoogleOAuthService, GoogleTokenValidationE
 # from app.services.journal_service import JournalService  # Temporarily disabled
 from app.core.config import settings
 from app.core.enhanced_auth import enhanced_auth_service
+from app.utils.security import get_client_ip
+from app.core.security_config import security_config
 import logging
 
 logger = logging.getLogger("auth_endpoints")
@@ -109,6 +111,8 @@ async def enhanced_login(
     """Enhanced login with cookies and remember me functionality."""
     
     content_type = request.headers.get("content-type", "")
+    # Basic brute-force protection: check recent attempts and lockout
+    ip_addr = get_client_ip(request)
     
     if "application/json" in content_type:
         data = await request.json()
@@ -119,8 +123,44 @@ async def enhanced_login(
                 status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid grant_type, must be '{settings.AUTH_DEFAULT_GRANT_TYPE}'",
             )
-        
-        user = await authenticate_user(creds.email, creds.password, db)
+        # Pre-check lockout window if user exists
+        pre_user = None
+        try:
+            result = await db.execute(select(User).where(User.email == creds.email))
+            pre_user = result.scalar_one_or_none()
+            if pre_user and pre_user.locked_until and pre_user.locked_until > datetime.now(timezone.utc):
+                retry_after = int((pre_user.locked_until - datetime.now(timezone.utc)).total_seconds())
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Account temporarily locked due to multiple failed attempts",
+                    headers={"Retry-After": str(max(1, retry_after))}
+                )
+        except HTTPException:
+            raise
+        except Exception:
+            pre_user = None
+        try:
+            user = await authenticate_user(creds.email, creds.password, db)
+        except HTTPException as e:
+            # Record failed attempt and lock if needed
+            try:
+                from app.db.models import LoginAttempt
+                if pre_user:
+                    await LoginAttempt.record_attempt(db, pre_user.id, False, ip_addr)
+                    attempts = await LoginAttempt.get_recent_attempts(db, pre_user.id, security_config.LOCKOUT_PERIOD_MINUTES)
+                    failed_recent = sum(1 for a in attempts if not a.success)
+                    if failed_recent >= security_config.MAX_FAILED_LOGIN_ATTEMPTS:
+                        pre_user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=security_config.LOCKOUT_DURATION_MINUTES)
+                        await db.commit()
+            except Exception:
+                pass
+            raise e
+        # Record successful attempt
+        try:
+            from app.db.models import LoginAttempt
+            await LoginAttempt.record_attempt(db, user.id, True, ip_addr)
+        except Exception:
+            pass
         
         # Create session tokens with remember me
         tokens = enhanced_auth_service.create_session_tokens(user, creds.remember_me)
@@ -172,7 +212,45 @@ async def enhanced_login(
             )
         
         remember_me = form.get("remember_me", "").lower() in ("true", "1", "yes")
-        user = await authenticate_user(email, form["password"], db)
+        # Pre-check lockout window if user exists
+        pre_user = None
+        try:
+            result = await db.execute(select(User).where(User.email == email))
+            pre_user = result.scalar_one_or_none()
+            if pre_user and pre_user.locked_until and pre_user.locked_until > datetime.now(timezone.utc):
+                retry_after = int((pre_user.locked_until - datetime.now(timezone.utc)).total_seconds())
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Account temporarily locked due to multiple failed attempts",
+                    headers={"Retry-After": str(max(1, retry_after))}
+                )
+        except HTTPException:
+            raise
+        except Exception:
+            pre_user = None
+
+        try:
+            user = await authenticate_user(email, form["password"], db)
+        except HTTPException as e:
+            # Record failed attempt and lock if needed
+            try:
+                from app.db.models import LoginAttempt
+                if pre_user:
+                    await LoginAttempt.record_attempt(db, pre_user.id, False, ip_addr)
+                    attempts = await LoginAttempt.get_recent_attempts(db, pre_user.id, security_config.LOCKOUT_PERIOD_MINUTES)
+                    failed_recent = sum(1 for a in attempts if not a.success)
+                    if failed_recent >= security_config.MAX_FAILED_LOGIN_ATTEMPTS:
+                        pre_user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=security_config.LOCKOUT_DURATION_MINUTES)
+                        await db.commit()
+            except Exception:
+                pass
+            raise e
+        # Record successful attempt
+        try:
+            from app.db.models import LoginAttempt
+            await LoginAttempt.record_attempt(db, user.id, True, ip_addr)
+        except Exception:
+            pass
         
         # Create session tokens
         tokens = enhanced_auth_service.create_session_tokens(user, remember_me)

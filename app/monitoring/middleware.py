@@ -11,6 +11,7 @@ from starlette.types import ASGIApp
 import structlog
 
 from app.monitoring.metrics import metrics
+from app.core.config import settings
 from app.monitoring.logging_config import (
     log_request_start, log_request_end, log_security_event
 )
@@ -43,13 +44,21 @@ class ProductionMonitoringMiddleware(BaseHTTPMiddleware):
         
         # Add correlation ID to request state and structured logging context
         request.state.correlation_id = correlation_id
+        # Capture app observability headers from client
+        app_env_header = request.headers.get("x-app-env") or settings.APP_ENV
+        client_version_header = request.headers.get("x-client-version")
+        user_timezone_header = request.headers.get("x-user-timezone")
+
         structlog.contextvars.bind_contextvars(
             correlation_id=correlation_id,
             request_id=correlation_id,  # Alternative name for compatibility
             method=request.method,
             path=request.url.path,
             client_ip=get_client_ip(request),
-            user_agent=request.headers.get("user-agent", "unknown")
+            user_agent=request.headers.get("user-agent", "unknown"),
+            app_env=app_env_header,
+            client_version=client_version_header,
+            user_timezone=user_timezone_header
         )
         
         # Get user ID if available from previous middleware

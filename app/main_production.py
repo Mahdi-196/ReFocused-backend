@@ -50,8 +50,16 @@ app.add_middleware(
     allow_origins=settings.CORS_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-    allow_headers=["*"],
-    expose_headers=["X-Correlation-ID", "X-Response-Time"]
+    allow_headers=[
+        "*",
+        "Authorization",
+        "Content-Type",
+        "X-Refresh-Token",
+        "X-App-Env",
+        "X-Client-Version",
+        "X-User-Timezone",
+    ],
+    expose_headers=["X-Correlation-ID", "X-Response-Time", "Set-Cookie"]
 )
 
 # Session middleware for authentication
@@ -78,6 +86,10 @@ app.include_router(api_router, prefix="/api/v1")
 
 # Include monitoring routes at root level (no prefix)
 app.include_router(monitoring_router)
+
+# Root-level auth refresh alias for clients calling /auth/refresh
+from app.api.v1.endpoints.auth import enhanced_refresh_token as _refresh_handler
+app.add_api_route("/auth/refresh", _refresh_handler, methods=["POST"], tags=["auth"])  # delegates to /api/v1/auth/refresh handler
 
 def _setup_sentry_and_tracing():
     if settings.SENTRY_DSN:

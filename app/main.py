@@ -64,6 +64,9 @@ app.add_middleware(
         "Authorization",
         "Content-Type", 
         "X-Refresh-Token",
+        "X-App-Env",
+        "X-Client-Version",
+        "X-User-Timezone",
         "X-Requested-With",
         "Cookie"
     ],
@@ -109,6 +112,16 @@ async def google_oauth_coop_middleware(request: Request, call_next):
     # Always allow popups for OAuth - this is required for Google OAuth to work
     response.headers["Cross-Origin-Opener-Policy"] = "same-origin-allow-popups"
     response.headers["Cross-Origin-Embedder-Policy"] = "unsafe-none"
+    # Echo observability headers for debugging (non-sensitive)
+    app_env = request.headers.get("x-app-env")
+    client_version = request.headers.get("x-client-version")
+    user_tz = request.headers.get("x-user-timezone")
+    if app_env:
+        response.headers["X-App-Env"] = app_env
+    if client_version:
+        response.headers["X-Client-Version"] = client_version
+    if user_tz:
+        response.headers["X-User-Timezone"] = user_tz
     
     return response
 
@@ -120,6 +133,8 @@ async def add_process_time_header(request: Request, call_next):
     response = await call_next(request)
     process_time = time.time() - start_time
     response.headers["X-Process-Time"] = str(process_time)
+    # Ensure caches vary on Origin for CORS
+    response.headers["Vary"] = ", ".join(filter(None, [response.headers.get("Vary"), "Origin"]))
     return response
 
 # Security monitoring middleware - DISABLED for development performance
