@@ -1,5 +1,4 @@
 import logging
-import os
 from typing import Any, Dict
 
 import httpx
@@ -19,9 +18,10 @@ class FeedbackService:
     async def submit(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         # Resolve endpoint on first use
         if not self.endpoint:
-            raw = os.getenv("FEEDBACK") or os.getenv("FEEDBACK_API_ENDPOINT")
+            # Use settings instead of direct os.getenv
+            raw = getattr(settings, 'FEEDBACK_API_ENDPOINT', None) or getattr(settings, 'FEEDBACK_API_BASE_URL', None)
             if not raw:
-                raise RuntimeError("FEEDBACK endpoint not configured. Set FEEDBACK or FEEDBACK_API_ENDPOINT")
+                raise RuntimeError("Feedback endpoint not configured. Set FEEDBACK_API_ENDPOINT or FEEDBACK_API_BASE_URL in settings")
             self.endpoint = raw.rstrip('/')
         try:
             # Log upstream target and payload (both structured and console via uvicorn.error)

@@ -1,6 +1,5 @@
 import logging
 from typing import Any, Dict
-import os
 
 import httpx
 
@@ -19,7 +18,8 @@ class FeatureVotingService:
 
     def __init__(self) -> None:
         self.timeout_seconds: float = 20.0
-        raw = os.getenv("FEATURE_VOTING")
+        # Use settings instead of direct os.getenv
+        raw = getattr(settings, 'FEATURE_VOTING_ENDPOINT', None) or getattr(settings, 'VOTING_API_BASE_URL', None)
         if raw:
             base = raw.rstrip('/')
             # FEATURE_VOTING may point directly to the vote endpoint

@@ -4,7 +4,7 @@ from typing import Any, Optional, Dict
 from fastapi import APIRouter, Request, Depends, HTTPException, status, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from jose import jwt, JWTError
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field, validator
 from sqlalchemy import select
 
 from app.core.security import (
@@ -27,6 +27,7 @@ from app.core.config import settings
 from app.core.enhanced_auth import enhanced_auth_service
 from app.utils.security import get_client_ip
 from app.core.security_config import security_config
+from app.utils.rate_limiter import apply_auth_rate_limit
 import logging
 
 logger = logging.getLogger("auth_endpoints")
@@ -36,15 +37,48 @@ router = APIRouter()
 
 class LoginRequest(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(..., min_length=1, max_length=200)
     grant_type: str = settings.AUTH_DEFAULT_GRANT_TYPE
     scope: Optional[str] = None
+
+    @validator('password')
+    def validate_password(cls, v):
+        if not v or len(v.strip()) == 0:
+            raise ValueError('Password is required')
+        return v.strip()
 
 
 class RegisterSchema(BaseModel):
     email: EmailStr
-    password: str
-    name: Optional[str] = None
+    password: str = Field(..., min_length=8, max_length=200)
+    name: Optional[str] = Field(None, max_length=100)
+
+    @validator('password')
+    def validate_password_strength(cls, v):
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters')
+        if not any(c.isupper() for c in v):
+            raise ValueError('Password must contain at least one uppercase letter')
+        if not any(c.islower() for c in v):
+            raise ValueError('Password must contain at least one lowercase letter')
+        if not any(c.isdigit() for c in v):
+            raise ValueError('Password must contain at least one number')
+        if not any(c in '!@#$%^&*()_+-=[]{};\':"|,.<>/?~`' for c in v):
+            raise ValueError('Password must contain at least one special character')
+        return v
+
+    @validator('name')
+    def validate_name(cls, v):
+        if v is not None:
+            import re
+            # Remove HTML tags
+            cleaned = re.sub(r'<[^>]*>', '', v)
+            if len(cleaned.strip()) == 0:
+                return None
+            if len(cleaned) > 100:
+                raise ValueError('Name is too long (max 100 characters)')
+            return cleaned.strip()
+        return v
 
 
 class UserProfile(BaseModel):
@@ -61,9 +95,34 @@ class UserProfile(BaseModel):
 
 
 class ProfileUpdate(BaseModel):
-    name: Optional[str] = None
-    profile_picture: Optional[str] = None
-    avatar: Optional[str] = None  # Legacy support for frontend compatibility
+    name: Optional[str] = Field(None, max_length=100)
+    profile_picture: Optional[str] = Field(None, max_length=500)
+    avatar: Optional[str] = Field(None, max_length=500)  # Legacy support for frontend compatibility
+
+    @validator('name')
+    def validate_name(cls, v):
+        if v is not None:
+            import re
+            # Remove HTML tags for security
+            cleaned = re.sub(r'<[^>]*>', '', v)
+            if len(cleaned.strip()) == 0:
+                return None
+            if len(cleaned) > 100:
+                raise ValueError('Name is too long (max 100 characters)')
+            return cleaned.strip()
+        return v
+
+    @validator('profile_picture', 'avatar')
+    def validate_image_url(cls, v):
+        if v is not None:
+            import re
+            # Basic URL validation and XSS prevention
+            if not re.match(r'^https?://[^\s<>"]{1,500}$', v):
+                raise ValueError('Invalid image URL format')
+            # Block javascript: and data: URLs for security
+            if v.lower().startswith(('javascript:', 'data:')):
+                raise ValueError('Invalid image URL - security risk detected')
+        return v
 
 
 class EnhancedLoginRequest(BaseModel):
@@ -109,6 +168,9 @@ async def enhanced_login(
     db: AsyncSession = Depends(get_db)
 ) -> Any:
     """Enhanced login with cookies and remember me functionality."""
+    
+    # Apply rate limiting for login attempts
+    await apply_auth_rate_limit(request, "login")
     
     content_type = request.headers.get("content-type", "")
     # Basic brute-force protection: check recent attempts and lockout
@@ -435,7 +497,10 @@ async def enhanced_refresh_token_alias(
     return await enhanced_refresh_token(request, response, db)
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
-async def register(data: RegisterSchema, response: Response, db: AsyncSession = Depends(get_db)) -> Any:
+async def register(data: RegisterSchema, response: Response, request: Request, db: AsyncSession = Depends(get_db)) -> Any:
+    # Apply rate limiting for registration attempts
+    await apply_auth_rate_limit(request, "register")
+    
     result = await db.execute(select(User).where(User.email == data.email))
     if result.scalar_one_or_none():
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Email already registered")
@@ -962,6 +1027,95 @@ async def change_username(
         message="Account name changed successfully",
         name=new_name
     )
+
+
+# JWT Cookie Migration Endpoints
+
+@router.post("/migrate-to-cookies")
+async def migrate_to_cookies(
+    request: Request,
+    response: Response,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Migration endpoint for existing localStorage users.
+    Converts header-based auth to HTTP-only cookies.
+    """
+    try:
+        # User is authenticated via Authorization header, now set cookies
+        await enhanced_auth_service.set_auth_cookies(
+            response, current_user.id, remember_me=False
+        )
+        
+        log_security_event(
+            event_type="auth_migration_to_cookies",
+            details={
+                "user_id": current_user.id,
+                "email": current_user.email,
+                "client_ip": get_client_ip(request)
+            },
+            level="info",
+            user_id=current_user.id
+        )
+        
+        return {
+            "success": True,
+            "message": "Successfully migrated to cookie-based authentication",
+            "user": {
+                "id": current_user.id,
+                "email": current_user.email,
+                "name": current_user.name
+            }
+        }
+    except Exception as e:
+        logger.error(f"Cookie migration failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to migrate to cookie authentication"
+        )
+
+
+@router.get("/cookie-support")
+async def check_cookie_support() -> Dict[str, Any]:
+    """
+    Check if backend supports cookie-based authentication.
+    Used by frontend to determine migration capability.
+    """
+    return {
+        "supported": True,
+        "csrf_enabled": settings.CSRF_ENABLED,
+        "csrf_header": settings.CSRF_HEADER_NAME,
+        "secure_cookies": settings.COOKIE_SECURE,
+        "same_site": settings.COOKIE_SAMESITE
+    }
+
+
+@router.post("/validate-csrf")
+async def validate_csrf_token(
+    request: Request,
+    current_user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """
+    Validate CSRF token for testing purposes.
+    Helps debug CSRF protection issues.
+    """
+    if not settings.CSRF_ENABLED:
+        return {
+            "csrf_enabled": False,
+            "message": "CSRF protection is disabled"
+        }
+    
+    csrf_header = request.headers.get(settings.CSRF_HEADER_NAME)
+    csrf_cookie = request.cookies.get("csrf_token")
+    
+    return {
+        "csrf_enabled": True,
+        "csrf_header_present": bool(csrf_header),
+        "csrf_cookie_present": bool(csrf_cookie),
+        "tokens_match": csrf_header == csrf_cookie if csrf_header and csrf_cookie else False,
+        "csrf_header_name": settings.CSRF_HEADER_NAME
+    }
 
 
 
