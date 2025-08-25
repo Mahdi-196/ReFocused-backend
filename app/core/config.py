@@ -179,10 +179,13 @@ class Settings(BaseSettings):
         default="https://example.execute-api.us-east-1.amazonaws.com/api/feature-voting",
         env="VOTING_API_BASE_URL",
     )
+    FEATURE_VOTING_ENDPOINT: Optional[str] = Field(None, env="FEATURE_VOTING_ENDPOINT")  # Alternative config name
     VOTING_API_KEY: Optional[str] = Field(None, env="VOTING_API_KEY")
     VOTING_API_PREFIX: str = Field("", env="VOTING_API_PREFIX")  # Optional stage prefix
 
     # External Feedback API (API Gateway → Lambda)
+    FEEDBACK_API_BASE_URL: Optional[str] = Field(None, env="FEEDBACK_API_BASE_URL")
+    FEEDBACK_API_ENDPOINT: Optional[str] = Field(None, env="FEEDBACK_API_ENDPOINT")  # Alternative config name
     FEEDBACK_API_KEY: Optional[str] = Field(None, env="FEEDBACK_API_KEY")
 
     # External Avatar Generation API

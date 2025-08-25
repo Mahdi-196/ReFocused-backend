@@ -1,149 +1,325 @@
-## Legal Documents
+# 🎯 ReFocused Backend API
 
-This repository includes draft legal documents suitable for a production application. Place links to these sections in your app footer. Update contact details, jurisdiction, and business information to match your company before going live. Effective date: 2025-08-20.
+> A production-ready FastAPI backend for a comprehensive productivity application, showcasing enterprise-level architecture and security practices.
 
----
-
-## Privacy Policy
-
-### Overview
-This Privacy Policy explains how ReFocused ("we", "us", "our") collects, uses, shares, and protects your information when you use the ReFocused application and APIs.
-
-### Information We Collect
-- Account data: email, name, profile picture, OAuth identifiers (Google), timestamps (created_at, last_login).
-- App data you provide: goals, habits, mood entries (happiness/focus/stress), journal collections/entries (which may contain sensitive information), calendars, study sets, mantras, voting choices, feedback, and email subscription status.
-- Technical data: IP address (for security and rate limiting), user agent, device metadata, request metadata, security logs, monitoring metrics.
-- Authentication/session data: hashed passwords (bcrypt), access/refresh tokens (cookies), session flags.
-- AI/chat content you submit when using AI features (proxied via our backend to upstream services).
-
-### How We Use Information
-- Provide, operate, and improve the service (feature delivery, personalization, performance).
-- Security and abuse prevention (rate limiting, anomaly detection, fraud prevention, secure authentication).
-- Customer support and service communications.
-- Optional marketing emails (only with your consent).
-- Research, analytics, and product development using aggregated/anonymized data.
-
-### Legal Bases (EEA/UK)
-- Contract: to provide the service you request.
-- Legitimate interests: security, fraud prevention, service improvement.
-- Consent: marketing emails, certain cookies, and where required for AI or analytics.
-- Legal obligations: compliance with applicable laws.
-
-### Sharing and Disclosures
-We do not sell your personal information. We share data with service providers under contract, strictly for service delivery, including:
-- Cloud hosting and infrastructure (e.g., AWS: API Gateway/Lambda, database, storage; Redis cache).
-- Email delivery and transactional communications.
-- Error monitoring and observability (e.g., optional Sentry/OpenTelemetry).
-We may disclose information to comply with law, protect rights and safety, or in connection with a merger/acquisition.
-
-### International Transfers
-Where data is transferred internationally, we use appropriate safeguards such as Standard Contractual Clauses and service provider commitments.
-
-### Data Retention
-- Account and in-app content: retained until you delete it or close your account.
-- Security logs and audit events: retained for a reasonable period to protect the service (typically up to 12 months unless otherwise required).
-- Rate-limit counters and ephemeral cache: short TTLs (often reset at midnight UTC) or as configured for operational needs.
-- Deleted emails: stored up to 72 hours to enforce account recreation safeguards.
-
-### Your Rights
-Depending on your location, you may have rights to access, correct, delete, port, restrict, or object to processing of your personal data, and to withdraw consent. Contact us to exercise these rights.
-
-### Children’s Privacy
-The service is not intended for children under 13 (or older age as required by local law). We do not knowingly collect such data.
-
-### Security
-We employ industry-standard security measures including HTTPS/TLS, bcrypt password hashing, token-based auth, HTTP-only cookies, rate limiting, input validation, and defense-in-depth monitoring. No system is 100% secure; please use strong, unique passwords and keep credentials safe.
-
-### Contact
-For privacy inquiries or rights requests, contact: privacy@refocused.app (update before launch).
+## 📋 Table of Contents
+- [What This Project Is](#what-this-project-is)
+- [🏗️ Technical Architecture](#️-technical-architecture)
+- [✨ Core Features](#-core-features)
+- [🔐 Security & Performance](#-security--performance)
+- [💾 Database Architecture](#-database-architecture)
+- [🚀 API Design](#-api-design)
+- [⚙️ Development & Deployment](#️-development--deployment)
+- [🎓 Skills Showcased](#-skills-showcased)
+- [🏭 Production Setup](#-production-setup)
 
 ---
 
-## Terms of Service
+## What This Project Is
 
-### Acceptance of Terms
-By accessing or using ReFocused, you agree to these Terms. If you do not agree, do not use the service.
+ReFocused is a **productivity platform backend** that helps users manage goals, track habits, journal thoughts, and monitor their personal growth. Think of it as the engine powering a comprehensive life management app.
 
-### Use of the Service
-- You must be at least 13 years old (or the age of digital consent in your jurisdiction).
-- You are responsible for your account security and all activity under it.
-- You will not attempt to bypass security, rate limits, or abuse any endpoints; automated scraping, spamming, and DDoS are prohibited.
-- You retain ownership of your content. You grant us a limited license to process your content solely to operate and improve the service.
-
-### Acceptable Use
-Prohibited content includes illegal, infringing, harmful, or abusive material. Prohibited conduct includes reverse engineering, unauthorized access, and interfering with service operations.
-
-### AI and Third-Party Services
-Certain features proxy to upstream services (e.g., AI chat, email, feature voting). You agree to comply with their acceptable use policies and understand that responses may be generated by third-party models.
-
-### Fees
-If paid plans are introduced, separate terms will apply. You will be notified in advance.
-
-### Termination
-We may suspend or terminate access for policy or legal violations, or to protect the service. You may close your account at any time; see Data Protection for deletion and export options.
-
-### Disclaimers
-The service is provided “as is” and “as available” without warranties of any kind.
-
-### Limitation of Liability
-To the maximum extent permitted by law, we are not liable for indirect, incidental, special, consequential, or punitive damages.
-
-### Governing Law and Dispute Resolution
-Specify governing law and venue applicable to your company (update before launch). Consumers may have additional rights in their jurisdiction.
-
-### Changes to These Terms
-We may modify these Terms; material changes will be communicated, and continued use constitutes acceptance.
+**What makes it special:**
+- Built for real-world production use with enterprise security
+- Handles complex user data with privacy protection
+- Integrates AI services for personalized content
+- Scales to support thousands of users
+- Includes comprehensive monitoring and logging
 
 ---
 
-## Cookie Policy
+## 🏗️ Technical Architecture
 
-### What Are Cookies?
-Cookies are small text files stored on your device. We use them to operate secure sessions and remember your preferences.
+### The Foundation
+This backend is built on **modern Python technologies** that prioritize performance and maintainability:
 
-### Cookies We Use
-- Strictly Necessary (Authentication):
-  - `access_token` (HTTP-only): authenticates requests; short-lived.
-  - `refresh_token` (HTTP-only): refreshes sessions; longer-lived.
-  - `auth_session`: indicates an active session for UX; not HTTP-only.
-- Functionality: may remember preferences in-app.
-- Third-party: Google OAuth may set cookies when authenticating.
+**🔧 Core Technologies**
+- **FastAPI** - Lightning-fast async web framework with automatic docs
+- **SQLAlchemy 2.0** - Advanced database ORM with async support  
+- **PostgreSQL** - Robust relational database for complex data relationships
+- **Redis** - High-speed caching and session management
+- **Docker** - Containerized deployment for consistency across environments
 
-Cookie attributes include Path=/, SameSite (Lax/None depending on environment), and Secure (enabled in production). Exact lifetimes follow our security settings (e.g., access tokens ~30 minutes, refresh tokens ~7–30 days).
+**🛡️ Security Stack**
+- **Multi-provider authentication** - Google OAuth + traditional login
+- **JWT with rotation** - Secure token management with refresh cycles
+- **Advanced rate limiting** - Prevent abuse with intelligent throttling
+- **SQL injection protection** - Multiple layers of input validation
+- **CSRF protection** - Secure cookie-based authentication
 
-### Your Choices
-Browser settings allow you to block or delete cookies. Blocking strictly necessary cookies may break login or core features. Where required, we will present a consent banner for non-essential cookies.
-
----
-
-## Data Protection (GDPR/CCPA)
-
-### Controller
-ReFocused acts as the data controller for personal data processed through the app and APIs.
-
-### Your Rights
-Subject to law, you have rights to access, rectify, delete, port, restrict, and object. You may withdraw consent at any time where processing is based on consent. You also have the right to lodge a complaint with your supervisory authority.
-
-### Requests
-You can:
-- Export data or delete activity via in-app endpoints (see User settings) or contact us.
-- Close your account; associated content will be deleted, subject to legal retention requirements.
-
-### Security and Safeguards
-We implement technical and organizational measures: encryption in transit, secure credential storage, access controls, rate limiting, structured logging, and regular reviews.
-
-### International Transfers
-Where data is transferred outside your region, we rely on appropriate safeguards (e.g., SCCs) and vetted providers.
-
-### Subprocessors
-Key service providers include cloud hosting, email infrastructure, cache/database, and observability platforms. A current list is available on request and will be published prior to launch.
-
-### Contact
-For data protection inquiries, data requests, or DPA matters: dpo@refocused.app (update before launch).
+**⚡ Performance Features**
+- **Async everywhere** - Non-blocking operations for maximum throughput
+- **Intelligent caching** - Redis-powered multi-tier caching system
+- **Connection pooling** - Optimized database connections
+- **Background tasks** - Automated cleanup and maintenance
 
 ---
 
-## Updates
-We will update these documents from time to time. Material changes will be announced in-app or via email when applicable.
+## ✨ Core Features
 
+### 👤 User Experience
+The platform puts user security and experience first:
 
+- **🔐 Smart Authentication**
+  - Login with Google or email/password
+  - Secure session management with automatic refresh
+  - Password strength validation and breach protection
+  - Account recovery with security safeguards
+
+- **👤 Profile Management**
+  - Customizable avatars and user preferences
+  - Privacy controls for sensitive data
+  - Account deletion with 72-hour safety window
+
+### 🎯 Productivity Tools
+Everything users need to stay organized and motivated:
+
+- **📈 Goal Management**
+  - Short-term (2-week) and long-term goal tracking
+  - Progress visualization with completion percentages
+  - Different goal types: percentage, counter, checklist
+
+- **✅ Habit Tracking**
+  - Daily habit completions with streak counters
+  - Historical data with timezone-aware logging
+  - Flexible habit management (add, pause, delete)
+
+- **📔 Digital Journaling**
+  - Private collections with optional password protection
+  - Rich text entries with full search capabilities
+  - Encrypted storage for sensitive thoughts
+
+- **😊 Mood & Wellness**
+  - Daily mood tracking (happiness, focus, stress levels)
+  - Mood analytics and trend visualization
+  - Integration with daily activities
+
+- **📊 Personal Analytics**
+  - Focus time tracking and session monitoring
+  - Task completion statistics
+  - Productivity insights and trends
+
+### 🤖 AI-Powered Features
+Personalized content to inspire and motivate:
+
+- **💬 AI Chat Assistant**
+  - Contextual conversations about productivity
+  - Daily usage limits to prevent overuse
+  - Conversation history for continuity
+
+- **📝 Daily Content**
+  - Inspirational quotes and vocabulary words
+  - Productivity tips and weekly themes
+  - Writing prompts for creative expression
+
+---
+
+## 🔐 Security & Performance
+
+### 🛡️ Enterprise-Grade Security
+Security isn't an afterthought—it's built into every layer:
+
+**Authentication Pipeline**
+```
+User Login → Token Verification → Session Management → CSRF Protection → API Access
+```
+
+**🔒 Multi-Layer Defense**
+1. **Input Sanitization** - Every user input is validated and cleaned
+2. **SQL Injection Prevention** - Parameterized queries + real-time pattern detection  
+3. **XSS Protection** - Content validation and HTML sanitization
+4. **Rate Limiting** - Smart throttling to prevent abuse and DoS attacks
+5. **CORS Security** - Strict cross-origin controls with credential management
+
+**📊 Security Monitoring**
+- Real-time tracking of failed login attempts
+- Automatic account lockout after multiple failures
+- Suspicious activity detection and alerting
+- Comprehensive security event logging
+- Structured logs for security analysis
+
+### ⚡ Performance Engineering
+Built to handle growth and deliver fast responses:
+
+**🚀 Speed Optimizations**
+- **Async Operations** - Non-blocking database and API calls
+- **Smart Caching** - Redis-powered caching with intelligent TTL management
+- **Connection Pooling** - Optimized database connections for high concurrency
+- **Background Tasks** - Non-blocking cleanup and maintenance operations
+
+**📈 Scalability Features**
+- **Stateless Design** - Easy horizontal scaling across multiple servers
+- **Load Balancer Ready** - Health checks and session management for clustering
+- **Monitoring Integration** - Built-in metrics collection and health reporting
+
+---
+
+## 💾 Database Architecture
+
+### 🗃️ Data Model Design
+The database is designed for both performance and data integrity:
+
+**👤 User System**
+- **User profiles** with authentication, preferences, and timezone support
+- **Security tracking** for login attempts, password history, and session management
+- **Streak tracking** for user engagement and daily interaction monitoring
+
+**🎯 Productivity Data**
+- **Goals** with polymorphic design supporting different types and durations
+- **Habits** with daily completion tracking and historical streak data
+- **Journal entries** with encrypted collections and granular privacy controls
+- **Mood tracking** with daily entries and analytical data storage
+
+**⚙️ Performance Features**
+- **Strategic indexing** for fast queries on frequently accessed data
+- **Relationship optimization** with smart lazy/eager loading
+- **Async batch operations** to minimize database round trips
+- **Connection pooling** with configurable pool sizes for high concurrency
+
+---
+
+## 🚀 API Design
+
+### 🎯 RESTful Architecture
+Clean, predictable API design that developers love:
+
+**📋 Endpoint Structure**
+- **Consistent naming** - `/api/v1/users`, `/api/v1/goals`, `/api/v1/habits`
+- **HTTP semantics** - GET for reads, POST for creates, PUT for updates
+- **Status codes** - Proper HTTP status codes for all scenarios
+- **Error handling** - Detailed error responses with helpful messages
+
+**📄 Response Format**
+All API responses follow a consistent pattern:
+```json
+{
+  "data": {
+    "user": {...},
+    "goals": [...]
+  },
+  "message": "Operation completed successfully",
+  "status": "success",
+  "timestamp": "2024-01-01T12:00:00Z"
+}
+```
+
+**📚 Documentation**
+- **Automatic docs** - Interactive Swagger/ReDoc documentation
+- **Type definitions** - Full TypeScript-compatible schemas
+- **Examples** - Real request/response examples for every endpoint
+
+---
+
+## ⚙️ Development & Deployment
+
+### 👨‍💻 Development Practices
+Built with maintainability and quality in mind:
+
+**📝 Code Quality**
+- **Type safety** - Full type hints throughout the codebase
+- **Error handling** - Comprehensive exception handling with detailed logging
+- **Clean architecture** - Clear separation of concerns and modular design
+- **Async best practices** - Proper async/await usage for maximum performance
+
+**🧪 Testing Strategy**  
+- **Unit testing** - Critical business logic covered with automated tests
+- **Integration testing** - Database and API endpoint testing with realistic scenarios
+- **Performance testing** - Bottleneck identification and optimization
+- **Security testing** - Vulnerability scanning and penetration testing scenarios
+
+### 🐳 Production Deployment
+
+**📦 Containerization**
+- **Docker setup** - Multi-stage builds for optimized production images
+- **Docker Compose** - Complete development environment with all dependencies
+- **Environment management** - Secure configuration with .env files
+- **Health monitoring** - Built-in health checks for container orchestration
+
+**🚀 Production Features**
+- **Load balancer ready** - Health endpoints and session management
+- **Monitoring integration** - Structured logging for centralized aggregation
+- **Background tasks** - Automated cleanup and maintenance jobs
+- **Graceful shutdown** - Proper cleanup on application termination
+
+---
+
+## 🎓 Skills Showcased
+
+This project demonstrates proficiency in modern backend development:
+
+### 🔧 **Technical Skills**
+- **Python & FastAPI** - Modern async web development
+- **Database Engineering** - PostgreSQL design, optimization, and migrations  
+- **Security Implementation** - Authentication, authorization, and threat prevention
+- **System Architecture** - Scalable design patterns and caching strategies
+- **Performance Engineering** - Optimization, caching, and async operations
+
+### 🏗️ **DevOps & Infrastructure**
+- **Containerization** - Docker and container orchestration
+- **Environment Management** - Configuration and secret management
+- **Monitoring & Logging** - Observability and debugging capabilities
+- **Production Deployment** - Real-world deployment considerations
+
+### 📊 **System Design**
+- **API Architecture** - RESTful design and documentation
+- **Data Modeling** - Complex relationships and performance optimization
+- **Security Architecture** - Multi-layer security implementation
+- **Scalability Planning** - Horizontal scaling and load distribution
+
+---
+
+## 🏭 Production Setup
+
+### 🖥️ Infrastructure Requirements
+Ready for real-world deployment:
+
+**🛠️ Core Components**
+- **PostgreSQL 15+** - Primary database with connection pooling
+- **Redis 7+** - Caching and session storage  
+- **Python 3.11+** - Runtime with full async support
+- **Nginx/Reverse Proxy** - SSL termination and load balancing
+- **Container Platform** - Docker/Kubernetes for orchestration
+
+**⚙️ Configuration Management**
+- **Secret management** - Secure storage for API keys and database credentials
+- **Environment variables** - Production, staging, and development configs
+- **SSL/TLS setup** - HTTPS enforcement with proper certificate management
+- **CORS policies** - Cross-origin request security configuration  
+- **Rate limiting** - Protection against abuse and DoS attacks
+
+### 🚀 Getting Started
+
+**For Development:**
+```bash
+# Clone and set up the environment
+git clone [repository-url]
+cd refocused-backend
+
+# Start with Docker Compose
+docker-compose up -d
+
+# The API will be available at http://localhost:8000
+# Interactive docs at http://localhost:8000/docs
+```
+
+**For Production:**
+- Configure environment variables for your infrastructure
+- Set up SSL certificates and reverse proxy
+- Configure monitoring and logging aggregation
+- Set up backup strategies for data persistence
+
+---
+
+## 💡 Why This Project Matters
+
+This backend showcases **production-ready development practices** that go beyond simple CRUD operations. It demonstrates:
+
+✅ **Enterprise Security** - Multi-layer protection against real-world threats  
+✅ **Performance at Scale** - Async architecture with intelligent caching  
+✅ **Data Privacy** - Encryption and secure handling of sensitive information  
+✅ **Developer Experience** - Comprehensive documentation and clean APIs  
+✅ **Operational Excellence** - Monitoring, logging, and maintenance automation  
+
+Perfect for demonstrating backend engineering skills in interviews and portfolio reviews.
+
+---
