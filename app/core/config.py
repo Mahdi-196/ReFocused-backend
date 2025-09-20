@@ -131,7 +131,10 @@ class Settings(BaseSettings):
 
     # Security Logging
     SECURITY_LOG_ENABLED: bool = Field(True, env="SECURITY_LOG_ENABLED")
-    SECURITY_LOG_PATH: str = Field("security.log", env="SECURITY_LOG_PATH")
+    SECURITY_LOG_PATH: str = Field(
+        default_factory=lambda: "/tmp/security.log" if (os.environ.get("AWS_LAMBDA_FUNCTION_NAME") or os.environ.get("AWS_EXECUTION_ENV")) else "security.log",
+        env="SECURITY_LOG_PATH"
+    )
     SECURITY_LOG_LEVEL: str = Field("INFO", env="SECURITY_LOG_LEVEL")
     SECURITY_LOG_FORMAT: str = Field(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s", 

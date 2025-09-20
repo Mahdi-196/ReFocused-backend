@@ -1,4 +1,5 @@
 import logging
+import os
 from datetime import datetime
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,8 +10,15 @@ from app.core.config import settings
 logger = logging.getLogger("security")
 logger.setLevel(logging.INFO)
 
-if settings.SECURITY_LOG_ENABLED:
-    handler = logging.FileHandler(settings.SECURITY_LOG_PATH)
+if settings.SECURITY_LOG_ENABLED and not logger.handlers:
+    log_path = getattr(settings, "SECURITY_LOG_PATH", "security.log") or "security.log"
+    running_on_lambda = bool(os.environ.get("AWS_LAMBDA_FUNCTION_NAME") or os.environ.get("AWS_EXECUTION_ENV"))
+    if running_on_lambda and (not os.path.isabs(log_path) or not log_path.startswith("/tmp")):
+        log_path = "/tmp/security.log"
+    try:
+        handler = logging.FileHandler(log_path)
+    except Exception:
+        handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter(settings.SECURITY_LOG_FORMAT))
     logger.addHandler(handler)
 

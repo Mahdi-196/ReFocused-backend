@@ -1,6 +1,7 @@
 import logging
 import json
 import datetime
+import os
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 from jose import jwt
@@ -8,11 +9,25 @@ from passlib.context import CryptContext
 
 from app.core.config import settings
 
+def _resolve_security_log_path() -> str:
+    """Return a writable log path, using /tmp on AWS Lambda."""
+    configured_path = getattr(settings, "SECURITY_LOG_PATH", "security.log")
+    running_on_lambda = bool(os.environ.get("AWS_LAMBDA_FUNCTION_NAME") or os.environ.get("AWS_EXECUTION_ENV"))
+    if running_on_lambda:
+        # Lambda filesystem is read-only except /tmp
+        if not configured_path or not configured_path.startswith("/tmp"):
+            return "/tmp/security.log"
+    return configured_path or "security.log"
+
+
 # Set up security logging
 security_logger = logging.getLogger("app.security")
 if not security_logger.handlers:
-    # Configure handler if not already set up
-    log_handler = logging.FileHandler("security.log")
+    try:
+        log_handler = logging.FileHandler(_resolve_security_log_path())
+    except Exception:
+        # Fallback to stdout if file handler cannot be created
+        log_handler = logging.StreamHandler()
     log_formatter = logging.Formatter(
         '%(asctime)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'

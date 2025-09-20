@@ -3,6 +3,7 @@ Production-ready structured logging configuration.
 """
 
 import logging
+import os
 import sys
 import json
 from typing import Dict, Any, Optional
@@ -108,10 +109,18 @@ def setup_structured_logging():
     
     # Add file handler for production
     if settings.is_production():
-        file_handler = logging.FileHandler('/var/log/refocused/app.log')
-        file_handler.setFormatter(formatter)
-        file_handler.setLevel(log_level)
-        root_logger.addHandler(file_handler)
+        log_path = '/var/log/refocused/app.log'
+        if os.environ.get('AWS_LAMBDA_FUNCTION_NAME') or os.environ.get('AWS_EXECUTION_ENV'):
+            # Use writable temp directory on Lambda
+            log_path = '/tmp/app.log'
+        try:
+            file_handler = logging.FileHandler(log_path)
+            file_handler.setFormatter(formatter)
+            file_handler.setLevel(log_level)
+            root_logger.addHandler(file_handler)
+        except OSError:
+            # If file handler cannot be created, continue with console logging only
+            pass
     
     # Configure specific loggers
     

@@ -22,6 +22,7 @@ from app.schemas.token import TokenResponse
 from app.schemas.google_auth import GoogleAuthRequest, GoogleAuthResponse, UserResponse
 from app.schemas.user import ChangePasswordRequest, ChangePasswordResponse, ChangeUsernameRequest, ChangeUsernameResponse
 from app.services.google_oauth import GoogleOAuthService, GoogleTokenValidationError
+from app.utils.async_timeout import timeout_endpoint, safe_db_operation
 # from app.services.journal_service import JournalService  # Temporarily disabled
 from app.core.config import settings
 from app.core.enhanced_auth import enhanced_auth_service
@@ -552,6 +553,7 @@ async def register(data: RegisterSchema, response: Response, request: Request, d
 
 
 @router.post("/google", response_model=GoogleAuthResponse)
+@timeout_endpoint(timeout_seconds=12)
 async def google_auth(
     request: GoogleAuthRequest,
     response: Response,
@@ -596,16 +598,20 @@ async def google_auth(
         
         # Check if user exists by Google ID first
         logger.info(f"Checking for existing user with Google ID: {user_info['google_id']}")
-        result = await db.execute(
-            select(User).where(User.google_id == user_info['google_id'])
+        result = await safe_db_operation(
+            db.execute(select(User).where(User.google_id == user_info['google_id'])),
+            timeout=5,
+            operation_name="user lookup by google_id"
         )
         user = result.scalar_one_or_none()
         
         # If not found by Google ID, check by email
         if not user:
             logger.info(f"No user found with Google ID, checking by email: {user_info['email']}")
-            result = await db.execute(
-                select(User).where(User.email == user_info['email'])
+            result = await safe_db_operation(
+                db.execute(select(User).where(User.email == user_info['email'])),
+                timeout=5,
+                operation_name="user lookup by email"
             )
             user = result.scalar_one_or_none()
             
@@ -617,8 +623,8 @@ async def google_auth(
                 user.profile_picture = user_info.get('picture')
                 if not user.name and user_info.get('name'):
                     user.name = user_info['name']
-                await db.commit()
-                await db.refresh(user)
+                await safe_db_operation(db.commit(), timeout=5, operation_name="commit link google account")
+                await safe_db_operation(db.refresh(user), timeout=5, operation_name="refresh linked user")
                 
                 log_security_event(
                     event_type="account_linked",
@@ -666,8 +672,8 @@ async def google_auth(
                 is_active=True,
             )
             db.add(user)
-            await db.commit()
-            await db.refresh(user)
+            await safe_db_operation(db.commit(), timeout=5, operation_name="commit new user")
+            await safe_db_operation(db.refresh(user), timeout=5, operation_name="refresh new user")
             
             # Set up default journal collection for new user
             # await JournalService.setup_user_journal_async(db, user.id)  # Temporarily disabled
