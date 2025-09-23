@@ -644,39 +644,8 @@ async def register(data: RegisterSchema, response: Response, request: Request, d
             logger.info(f"❌ REGISTER EMAIL EXISTS: {user_email}")
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Email already registered")
 
-        # Step 4: Check deleted emails with detailed debugging
-        logger.info(f"📊 STEP 4/7: Checking deleted emails for {user_email}")
-        deleted_check_start = time.time()
-
-        try:
-            from app.db.models import DeletedEmail
-            logger.info(f"   - Importing DeletedEmail model...")
-            logger.info(f"   - Calling is_email_recently_deleted for {data.email[:10]}...")
-            deleted_check = await DeletedEmail.is_email_recently_deleted(db, data.email)
-            deleted_check_time = time.time() - deleted_check_start
-
-            logger.info(f"✅ STEP 4/7 COMPLETE: Deleted email check in {deleted_check_time:.2f}s (is_deleted: {deleted_check.get('is_deleted', False)})")
-
-            if deleted_check_time > 3.0:
-                logger.warning(f"🐌 SLOW DELETED EMAIL CHECK: {deleted_check_time:.2f}s")
-
-        except Exception as deleted_check_error:
-            deleted_check_error_time = time.time() - deleted_check_start
-            logger.error(f"💥 STEP 4/7 FAILED: Deleted email check after {deleted_check_error_time:.2f}s - {str(deleted_check_error)}")
-            logger.exception("Deleted email check exception details:")
-            raise
-
-        if deleted_check.get("is_deleted", False):
-            logger.info(f"❌ EMAIL RECENTLY DELETED: {user_email}")
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "email_recently_deleted",
-                    "message": f"This email address cannot be used to create a new account. Please try again in {deleted_check['hours_remaining']} hours.",
-                    "hours_remaining": deleted_check["hours_remaining"],
-                    "available_at": deleted_check["available_at"]
-                }
-            )
+        # Step 4: DeletedEmail cooldown disabled per request
+        logger.info(f"📊 STEP 4/7: Deleted email cooldown disabled")
 
         # Step 5: Password hashing with detailed timing
         logger.info(f"📊 STEP 5/7: Password hashing for {user_email}")
@@ -906,19 +875,7 @@ async def google_auth(
                     detail="Email address is already registered with a different account"
                 )
 
-            # Check if email was recently deleted (within 72 hours)
-            from app.db.models import DeletedEmail
-            deleted_check = await DeletedEmail.is_email_recently_deleted(db, user_info['email'])
-            if deleted_check["is_deleted"]:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "error": "email_recently_deleted",
-                        "message": f"This email address cannot be used to create a new account. Please try again in {deleted_check['hours_remaining']} hours.",
-                        "hours_remaining": deleted_check["hours_remaining"],
-                        "available_at": deleted_check["available_at"]
-                    }
-                )
+            # DeletedEmail cooldown disabled per request
 
             user = User(
                 email=user_info['email'],

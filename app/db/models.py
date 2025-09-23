@@ -100,14 +100,14 @@ class GoalBase(Base):
     
     # Base constraints for all goals
     __table_args__ = (
-        CheckConstraint('goal_type IN ("percentage", "counter", "checklist")', name='chk_goal_type'),
+        CheckConstraint('goal_type IN (\'percentage\', \'counter\', \'checklist\')', name='chk_goal_type'),
         CheckConstraint('target_value >= 1 AND target_value <= 999', name='chk_target_value_range'),
         CheckConstraint('current_value >= 0', name='chk_current_value_positive'),
-        CheckConstraint('duration IN ("two_week", "long_term")', name='chk_duration_type'),
+        CheckConstraint('duration IN (\'two_week\', \'long_term\')', name='chk_duration_type'),
         CheckConstraint(
-            '(goal_type = "percentage" AND target_value = 100) OR '
-            '(goal_type = "counter" AND target_value >= 2 AND target_value <= 999) OR '
-            '(goal_type = "checklist" AND target_value = 1)',
+            '(goal_type = \'percentage\' AND target_value = 100) OR '
+            '(goal_type = \'counter\' AND target_value >= 2 AND target_value <= 999) OR '
+            '(goal_type = \'checklist\' AND target_value = 1)',
             name='chk_goal_type_target_consistency'
         ),
     )
@@ -123,7 +123,7 @@ class Goal2Week(GoalBase):
     
     # Additional constraints and indexes specific to 2-week goals
     __table_args__ = GoalBase.__table_args__ + (
-        CheckConstraint('duration = "two_week"', name='chk_2week_duration'),
+        CheckConstraint('duration = \'two_week\'', name='chk_2week_duration'),
         Index('idx_goals_2week_user_type', 'user_id', 'goal_type'),
         Index('idx_goals_2week_user_completed', 'user_id', 'is_completed'),
         Index('idx_goals_2week_user_expires', 'user_id', 'expires_at'),
@@ -139,7 +139,7 @@ class GoalLongTerm(GoalBase):
     
     # Additional constraints and indexes specific to long-term goals
     __table_args__ = GoalBase.__table_args__ + (
-        CheckConstraint('duration = "long_term"', name='chk_longterm_duration'),
+        CheckConstraint('duration = \'long_term\'', name='chk_longterm_duration'),
         Index('idx_goals_longterm_user_type', 'user_id', 'goal_type'),
         Index('idx_goals_longterm_user_completed', 'user_id', 'is_completed'),
     )

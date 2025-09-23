@@ -25,8 +25,14 @@ __pycache__/
 docs/
 README*
 
+# Deployment directory (large files not needed in container)
+deployment/
+
 # Development scripts
 start_dev.sh
+
+# Include startup script
+!start.sh
 
 # Log files
 *.log

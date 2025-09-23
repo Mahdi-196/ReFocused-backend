@@ -123,21 +123,15 @@ def _setup_sentry_and_tracing():
 async def _run_db_migrations_if_enabled():
     if settings.RUN_DB_MIGRATIONS_ON_STARTUP:
         try:
-            import subprocess
-            logger.info("🗂️ Running database migrations...")
-            subprocess.run(
-                [
-                    "alembic",
-                    "-c",
-                    settings.ALEMBIC_INI_PATH,
-                    "upgrade",
-                    "head",
-                ],
-                check=True,
-            )
-            logger.info("✅ Database migrations applied")
+            logger.info("🗂️ Creating database tables...")
+            from app.db.models import Base
+            from app.db.database import engine
+            # Create all tables directly from models
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            logger.info("✅ Database tables created")
         except Exception as e:
-            logger.error(f"❌ Failed to run migrations: {e}")
+            logger.error(f"❌ Failed to create tables: {e}")
             raise
 
 @app.on_event("startup")

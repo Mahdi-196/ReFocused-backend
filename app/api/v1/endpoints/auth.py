@@ -502,23 +502,15 @@ async def register(data: RegisterSchema, response: Response, request: Request, d
     # Apply rate limiting for registration attempts
     await apply_auth_rate_limit(request, "register")
     
-    result = await db.execute(select(User).where(User.email == data.email))
+    result = await safe_db_operation(
+        db.execute(select(User).where(User.email == data.email)),
+        timeout=5,
+        operation_name="register: lookup existing email"
+    )
     if result.scalar_one_or_none():
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Email already registered")
     
-    # Check if email was recently deleted (within 72 hours)
-    from app.db.models import DeletedEmail
-    deleted_check = await DeletedEmail.is_email_recently_deleted(db, data.email)
-    if deleted_check["is_deleted"]:
-        raise HTTPException(
-            status_code=400, 
-            detail={
-                "error": "email_recently_deleted",
-                "message": f"This email address cannot be used to create a new account. Please try again in {deleted_check['hours_remaining']} hours.",
-                "hours_remaining": deleted_check["hours_remaining"],
-                "available_at": deleted_check["available_at"]
-            }
-        )
+    # DeletedEmail cooldown disabled per request
     user = User(
         email=data.email,
         hashed_password=get_password_hash(data.password),
@@ -526,8 +518,8 @@ async def register(data: RegisterSchema, response: Response, request: Request, d
         is_active=True,
     )
     db.add(user)
-    await db.commit()
-    await db.refresh(user)
+    await safe_db_operation(db.commit(), timeout=5, operation_name="register: commit new user")
+    await safe_db_operation(db.refresh(user), timeout=5, operation_name="register: refresh new user")
     
     # Set up default journal collection for new user
                 # await JournalService.setup_user_journal_async(db, user.id)  # Temporarily disabled
@@ -647,19 +639,7 @@ async def google_auth(
             
             logger.info(f"Generated unique email: {unique_email}")
             
-            # Check if the generated email was recently deleted (within 72 hours)
-            from app.db.models import DeletedEmail
-            deleted_check = await DeletedEmail.is_email_recently_deleted(db, unique_email)
-            if deleted_check["is_deleted"]:
-                raise HTTPException(
-                    status_code=400, 
-                    detail={
-                        "error": "email_recently_deleted",
-                        "message": f"This email address cannot be used to create a new account. Please try again in {deleted_check['hours_remaining']} hours.",
-                        "hours_remaining": deleted_check["hours_remaining"],
-                        "available_at": deleted_check["available_at"]
-                    }
-                )
+            # DeletedEmail cooldown disabled per request
             
             # Create new user
             user = User(

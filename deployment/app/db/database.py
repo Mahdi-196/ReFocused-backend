@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 import logging
 import os
@@ -9,19 +9,54 @@ import asyncio
 from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
 
 from app.core.config import settings
+import socket
+import ssl
+import contextlib
 
 # Configure logging for database connections
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+def _mask_url_credentials(url: str) -> str:
+    try:
+        p = urlparse(url)
+        userinfo = ""
+        if p.username:
+            userinfo = f"{p.username}:****@" if p.password is not None else f"{p.username}@"
+        hostport = p.hostname or ""
+        if p.port:
+            hostport += f":{p.port}"
+        netloc = userinfo + hostport
+        return urlunparse((p.scheme, netloc, p.path, p.params, p.query, p.fragment))
+    except Exception:
+        return url
+
+def _mask_redis_url(url: str) -> str:
+    try:
+        p = urlparse(url)
+        userinfo = ""
+        if p.username or p.password is not None:
+            userinfo = "****@"
+        hostport = p.hostname or ""
+        if p.port:
+            hostport += f":{p.port}"
+        netloc = userinfo + hostport
+        return urlunparse((p.scheme, netloc, p.path, p.params, p.query, p.fragment))
+    except Exception:
+        return url
+
 # Enhanced database connection debugging for Lambda
 logger.info(f"🔗 DATABASE CONNECTION SETUP:")
 logger.info(f"📍 Environment: AWS_LAMBDA_FUNCTION_NAME={os.getenv('AWS_LAMBDA_FUNCTION_NAME', 'None')}")
-logger.info(f"📍 AWS Region: {os.getenv('AWS_REGION', 'unknown')}")
+logger.info(f"📍 AWS Execution Env: {os.getenv('AWS_EXECUTION_ENV', 'unknown')}")
+logger.info(f"📍 AWS Region: {os.getenv('AWS_REGION', 'unknown')} (default={os.getenv('AWS_DEFAULT_REGION', 'unknown')})")
 logger.info(f"📍 VPC ID: {os.getenv('VPC_ID', 'unknown')}")
 logger.info(f"📍 Subnet IDs: {os.getenv('SUBNET_IDS', 'unknown')}")
 logger.info(f"📍 Security Group: {os.getenv('SECURITY_GROUP_ID', 'unknown')}")
-logger.info(f"🌐 DATABASE_URL: {settings.DATABASE_URL[:50]}...")  # Log first 50 chars for security
+logger.info(f"🌐 DATABASE_URL (masked): {_mask_url_credentials(settings.DATABASE_URL)}")
+masked_redis_url = _mask_redis_url(getattr(settings, 'REDIS_URL', ''))
+if masked_redis_url:
+    logger.info(f"🌐 REDIS_URL (masked): {masked_redis_url}")
 logger.info(f"🏊 Pool Config: size={settings.DATABASE_POOL_SIZE}, max_overflow={settings.DATABASE_MAX_OVERFLOW}")
 logger.info(f"⏰ Timeouts: pool_timeout={settings.DATABASE_POOL_TIMEOUT}, pool_recycle={settings.DATABASE_POOL_RECYCLE}")
 logger.info(f"🔍 Engine creation starting at: {time.time()}")
@@ -71,11 +106,9 @@ try:
     connect_args = {
         "server_settings": {
             "application_name": "ReFocused-Lambda",
-            "log_statement": "all",  # Log all SQL statements
-            "log_duration": "on",   # Log query duration
         },
-        "timeout": 15,  # Connection timeout (reduced from 30)
-        "command_timeout": 20,  # Query timeout (reduced from 30)
+        "timeout": 10,  # tighter connection timeout
+        "command_timeout": 15,  # tighter query timeout
     }
 
     # Add SSL configuration for production
@@ -89,7 +122,7 @@ try:
 
     engine = create_async_engine(
         sanitized_database_url,
-        echo=True,  # Enable DB logging for debugging
+        echo=False,  # reduce noise
         future=True,
         pool_size=settings.DATABASE_POOL_SIZE,
         max_overflow=settings.DATABASE_MAX_OVERFLOW,
@@ -249,6 +282,140 @@ async def get_db():
 def get_db_session():
     """Context manager for database sessions (for background tasks)"""
     return async_session()
+
+# Lightweight preflight diagnostics (DNS + TCP + TLS) at import time
+_db_preflight_ran = False
+
+def _extract_db_host_port(url: str) -> tuple[str, int]:
+    parsed = urlparse(url)
+    netloc = parsed.netloc.split('@')[-1]
+    host_port = netloc.rsplit(':', 1)
+    host = host_port[0]
+    port = int(host_port[1]) if len(host_port) == 2 and host_port[1].isdigit() else 5432
+    return host, port
+
+def _dns_lookup(host: str, port: int) -> list[str]:
+    infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    addrs = []
+    for info in infos:
+        sockaddr = info[4]
+        addrs.append(sockaddr[0])
+    seen = set()
+    unique = []
+    for ip in addrs:
+        if ip not in seen:
+            seen.add(ip)
+            unique.append(ip)
+    return unique
+
+def _tcp_probe(host: str, port: int, timeout: float = 2.0) -> bool:
+    with socket.create_connection((host, port), timeout=timeout) as s:
+        return True
+
+async def _run_db_preflight(url: str) -> None:
+    host, port = _extract_db_host_port(url)
+    steps = []
+    loop = asyncio.get_event_loop()
+    # DNS
+    try:
+        t0 = loop.time()
+        ips = await asyncio.wait_for(asyncio.to_thread(_dns_lookup, host, port), timeout=2.0)
+        steps.append(("DNS", True, f"{host}->{ips} {loop.time()-t0:.2f}s"))
+    except asyncio.TimeoutError:
+        steps.append(("DNS", False, "timeout 2.0s"))
+    except Exception as e:
+        steps.append(("DNS", False, str(e)))
+    # TCP
+    try:
+        t0 = loop.time()
+        await asyncio.wait_for(asyncio.to_thread(_tcp_probe, host, port, 2.0), timeout=3.0)
+        steps.append(("TCP", True, f"{host}:{port} {loop.time()-t0:.2f}s"))
+    except asyncio.TimeoutError:
+        steps.append(("TCP", False, "timeout 3.0s"))
+    except Exception as e:
+        steps.append(("TCP", False, str(e)))
+    # TLS
+    try:
+        t0 = loop.time()
+        ctx = ssl.create_default_context()
+        reader, writer = await asyncio.wait_for(asyncio.open_connection(host=host, port=port, ssl=ctx, server_hostname=host), timeout=3.0)
+        writer.close()
+        with contextlib.suppress(Exception):
+            await writer.wait_closed()
+        steps.append(("TLS", True, f"handshake {loop.time()-t0:.2f}s"))
+    except asyncio.TimeoutError:
+        steps.append(("TLS", False, "timeout 3.0s"))
+    except Exception as e:
+        steps.append(("TLS", False, str(e)))
+    summary = " ".join([f"{'✅' if ok else '❌'} {name}({detail})" for name, ok, detail in steps])
+    logger.info(f"DB CHECKLIST: {summary}")
+
+# Attach simple engine event hooks for clarity
+try:
+    if not getattr(engine, "_diag_events", False):
+        @event.listens_for(engine.sync_engine, "connect")
+        def _on_connect(dbapi_connection, connection_record):
+            logger.info("✅ DB EVENT: CONNECT established")
+
+        @event.listens_for(engine.sync_engine, "checkout")
+        def _on_checkout(dbapi_connection, connection_record, connection_proxy):
+            logger.info("✅ DB EVENT: POOL CHECKOUT")
+
+        @event.listens_for(engine.sync_engine, "handle_error")
+        def _on_error(exception_context):
+            logger.error(f"❌ DB EVENT: ERROR {getattr(exception_context, 'original_exception', exception_context)}")
+
+        engine._diag_events = True  # type: ignore[attr-defined]
+except Exception:
+    pass
+
+# Lightweight preflight diagnostics (DNS + TCP) at first use
+_db_preflight_ran = False
+
+def _extract_db_host_port(url: str) -> tuple[str, int]:
+    parsed = urlparse(url)
+    netloc = parsed.netloc.split('@')[-1]
+    host_port = netloc.rsplit(':', 1)
+    host = host_port[0]
+    port = int(host_port[1]) if len(host_port) == 2 and host_port[1].isdigit() else 5432
+    return host, port
+
+def _dns_lookup(host: str, port: int) -> list[str]:
+    infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    addrs = []
+    for info in infos:
+        sockaddr = info[4]
+        addrs.append(sockaddr[0])
+    # Deduplicate while preserving order
+    seen = set()
+    unique = []
+    for ip in addrs:
+        if ip not in seen:
+            seen.add(ip)
+            unique.append(ip)
+    return unique
+
+def _tcp_probe(host: str, port: int, timeout: float = 2.0) -> bool:
+    with socket.create_connection((host, port), timeout=timeout) as s:
+        return True
+
+async def _run_db_preflight(url: str) -> None:
+    host, port = _extract_db_host_port(url)
+    logger.info(f"🧪 DB PREFLIGHT: host={host}, port={port}")
+    try:
+        ips = await asyncio.wait_for(asyncio.to_thread(_dns_lookup, host, port), timeout=2.0)
+        logger.info(f"🧪 DB PREFLIGHT: DNS {host} -> {ips}")
+    except asyncio.TimeoutError:
+        logger.error("🧪 DB PREFLIGHT: DNS resolution timed out after 2.0s")
+    except Exception as e:
+        logger.error(f"🧪 DB PREFLIGHT: DNS error: {e}")
+    try:
+        ok = await asyncio.wait_for(asyncio.to_thread(_tcp_probe, host, port, 2.0), timeout=3.0)
+        logger.info(f"🧪 DB PREFLIGHT: TCP connect {host}:{port} -> {ok}")
+    except asyncio.TimeoutError:
+        logger.error("🧪 DB PREFLIGHT: TCP connect timed out after 3.0s")
+    except Exception as e:
+        logger.error(f"🧪 DB PREFLIGHT: TCP error: {e}")
 
 # Create synchronous engine for background tasks that can't use async
 sync_database_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
