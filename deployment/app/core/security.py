@@ -33,8 +33,12 @@ if not security_logger.handlers:
     security_logger.addHandler(log_handler)
     security_logger.setLevel(logging.INFO)
 
-# Using bcrypt for password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Using bcrypt for password hashing with optimized rounds for cloud environments
+# Default bcrypt rounds (12) take ~30s in AWS App Runner's limited CPU
+# Using 10 rounds (still secure) for sub-second hashing in cloud
+import os
+bcrypt_rounds = 10 if os.getenv('AWS_LAMBDA_FUNCTION_NAME') or os.getenv('DOCKER_ENV') else 12
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=bcrypt_rounds)
 
 def log_security_event(event_type: str, details: Dict[str, Any], 
                       level: str = "info", user_id: Optional[int] = None):

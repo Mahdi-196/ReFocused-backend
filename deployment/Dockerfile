@@ -36,22 +36,17 @@ COPY alembic.ini .
 RUN rm -f /refocused-production-lambda.zip && \
     zip -r9 /refocused-production-lambda.zip . -x "*.pyc" "*__pycache__*" "*.git*"
 
-# Production Docker stage for local development
+# Lambda deployment package extraction (for build output)
+FROM scratch AS lambda-output
+COPY --from=lambda-package /refocused-production-lambda.zip /
+
+# Production Docker stage for local development (FINAL STAGE - default target)
 FROM --platform=linux/amd64 python:3.11-slim
 
 # Set environment variables for Docker execution
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     DOCKER_ENV=true
-
-# Install runtime dependencies only
-RUN apt-get update && apt-get install -y \
-    libpq5 \
-    curl \
-    gcc \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
 
 # Install Python dependencies
 COPY requirements.txt /tmp/
@@ -69,13 +64,5 @@ RUN mkdir -p /var/log/refocused
 # Expose port
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
-
-# Lambda deployment package extraction (for build output)
-FROM scratch AS lambda-output
-COPY --from=lambda-package /refocused-production-lambda.zip /
-
 # Run the production application
-CMD ["sh", "-c", "python3 -m uvicorn app.main_production:app --host 0.0.0.0 --port 8000"]
+CMD ["python3", "-m", "uvicorn", "app.main_production:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]

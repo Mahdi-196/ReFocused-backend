@@ -1,1 +1,0 @@
-# Goal utility functions 

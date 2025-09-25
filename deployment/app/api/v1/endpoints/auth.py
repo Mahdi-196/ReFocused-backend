@@ -132,6 +132,7 @@ async def enhanced_login(
         content_type = request.headers.get("content-type", "")
         # Basic brute-force protection: check recent attempts and lockout
         ip_addr = get_client_ip(request)
+        creds = None
 
         if "application/json" in content_type:
             request_parse_start = time.time()
@@ -145,11 +146,12 @@ async def enhanced_login(
             if request_parse_time > 1.0:
                 logger.warning(f"🐌 LOGIN SLOW REQUEST PARSE: {request_parse_time:.2f}s")
 
-        if settings.AUTH_REQUIRE_GRANT_TYPE and creds.grant_type != settings.AUTH_DEFAULT_GRANT_TYPE:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid grant_type, must be '{settings.AUTH_DEFAULT_GRANT_TYPE}'",
-            )
+            if settings.AUTH_REQUIRE_GRANT_TYPE and creds.grant_type != settings.AUTH_DEFAULT_GRANT_TYPE:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid grant_type, must be '{settings.AUTH_DEFAULT_GRANT_TYPE}'",
+                )
+
             # Pre-check lockout window if user exists
             pre_user = None
             try:
@@ -178,6 +180,7 @@ async def enhanced_login(
             except Exception as e:
                 logger.error(f"💥 LOGIN DB LOOKUP ERROR: {str(e)} for {user_email}")
                 pre_user = None
+
             try:
                 auth_start = time.time()
                 user = await authenticate_user(creds.email, creds.password, db)
@@ -555,62 +558,96 @@ async def enhanced_refresh_token_alias(
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register(data: RegisterSchema, response: Response, request: Request, db: AsyncSession = Depends(get_db)) -> Any:
     import time
-    import asyncio
-    import os
-
     register_start_time = time.time()
     user_email = f"{data.email[:5]}...@{data.email.split('@')[1] if '@' in data.email else 'unknown'}"
-
-    # Network and infrastructure debugging
     logger.info(f"🚀 REGISTER START: {user_email}")
-    logger.info(f"🌐 AWS_LAMBDA_FUNCTION_NAME: {os.getenv('AWS_LAMBDA_FUNCTION_NAME', 'None')}")
-    logger.info(f"🌐 DATABASE_URL: {settings.DATABASE_URL[:50]}...")
-    logger.info(f"🌐 REDIS_URL: {settings.REDIS_URL[:30]}...")
-
-    # VPC and network connectivity check
-    logger.info(f"🔌 NETWORK ENV CHECK:")
-    logger.info(f"   - AWS_REGION: {os.getenv('AWS_REGION', 'unknown')}")
-    logger.info(f"   - AWS_DEFAULT_REGION: {os.getenv('AWS_DEFAULT_REGION', 'unknown')}")
-    logger.info(f"   - VPC_ID: {os.getenv('VPC_ID', 'unknown')}")
-    logger.info(f"   - SUBNET_IDS: {os.getenv('SUBNET_IDS', 'unknown')}")
-    logger.info(f"   - SECURITY_GROUP_ID: {os.getenv('SECURITY_GROUP_ID', 'unknown')}")
 
     try:
-        # Step 1: Rate limiting with detailed network debugging
-        logger.info(f"📊 STEP 1/7: Rate limiting check for {user_email}")
+        # Step 1: Rate limiting
         rate_limit_start = time.time()
-
         try:
             await apply_auth_rate_limit(request, "register")
             rate_limit_time = time.time() - rate_limit_start
-            logger.info(f"✅ STEP 1/7 COMPLETE: Rate limit check in {rate_limit_time:.2f}s")
-
-            if rate_limit_time > 2.0:
-                logger.warning(f"🐌 SLOW RATE LIMIT: {rate_limit_time:.2f}s - possible Redis connectivity issue")
+            if rate_limit_time > 5.0:
+                logger.warning(f"🐌 SLOW RATE LIMIT: {rate_limit_time:.3f}s")
         except Exception as rate_error:
-            rate_error_time = time.time() - rate_limit_start
-            logger.error(f"💥 STEP 1/7 FAILED: Rate limit after {rate_error_time:.2f}s - {str(rate_error)}")
-            logger.exception("Rate limit exception details:")
+            logger.error(f"💥 Rate limit failed: {str(rate_error)}")
             raise
 
-        # Step 2: Database connectivity test
+        # Step 2: Database connectivity and network diagnosis
         logger.info(f"📊 STEP 2/7: Database connectivity test for {user_email}")
         db_test_start = time.time()
 
         try:
+            # Log network environment details
+            import socket
+            hostname = socket.gethostname()
+            logger.info(f"🌐 NETWORK DEBUG: Running on host '{hostname}'")
+
+            # Parse database URL for network debugging
+            db_url = str(settings.DATABASE_URL)
+            if "@" in db_url:
+                # Extract host from DATABASE_URL (format: postgresql://user:pass@host:port/db)
+                host_part = db_url.split("@")[1].split("/")[0]
+                db_host = host_part.split(":")[0]
+                db_port = host_part.split(":")[1] if ":" in host_part else "5432"
+                logger.info(f"🌐 DATABASE TARGET: {db_host}:{db_port}")
+
+                # Test DNS resolution
+                try:
+                    dns_start = time.time()
+                    resolved_ip = socket.gethostbyname(db_host)
+                    dns_time = time.time() - dns_start
+                    logger.info(f"🌐 DNS RESOLUTION: {db_host} -> {resolved_ip} in {dns_time:.3f}s")
+
+                    if dns_time > 2.0:
+                        logger.warning(f"🐌 SLOW DNS: {dns_time:.3f}s - possible VPC DNS issue")
+                except Exception as dns_error:
+                    logger.error(f"💥 DNS RESOLUTION FAILED: {dns_error}")
+
+                # Test TCP connectivity
+                try:
+                    tcp_start = time.time()
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(10.0)  # 10 second timeout
+                    result = sock.connect_ex((db_host, int(db_port)))
+                    tcp_time = time.time() - tcp_start
+                    sock.close()
+
+                    if result == 0:
+                        logger.info(f"🌐 TCP CONNECTION: SUCCESS to {db_host}:{db_port} in {tcp_time:.3f}s")
+                        if tcp_time > 3.0:
+                            logger.warning(f"🐌 SLOW TCP CONNECT: {tcp_time:.3f}s - VPC/security group latency")
+                    else:
+                        logger.error(f"💥 TCP CONNECTION FAILED: Error code {result} to {db_host}:{db_port}")
+                except Exception as tcp_error:
+                    logger.error(f"💥 TCP TEST FAILED: {tcp_error}")
+
+            # Now test actual database query
+            logger.info(f"🗃️  Testing SQL query execution...")
             from sqlalchemy import text
+            query_start = time.time()
             test_result = await db.execute(text("SELECT 1 as test_value"))
+            query_time = time.time() - query_start
+            logger.info(f"🗃️  SQL query executed in {query_time:.3f}s")
+
+            fetch_start = time.time()
             test_value = test_result.scalar()
+            fetch_time = time.time() - fetch_start
+            logger.info(f"🗃️  Result fetched in {fetch_time:.3f}s")
+
             db_test_time = time.time() - db_test_start
 
             if test_value == 1:
-                logger.info(f"✅ STEP 2/7 COMPLETE: Database connectivity OK in {db_test_time:.2f}s")
+                logger.info(f"✅ STEP 2/7 COMPLETE: Database connectivity OK in {db_test_time:.3f}s (query: {query_time:.3f}s, fetch: {fetch_time:.3f}s)")
             else:
                 logger.error(f"💥 STEP 2/7 FAILED: Database test returned {test_value} instead of 1")
                 raise Exception(f"Database connectivity test failed: got {test_value}")
 
             if db_test_time > 3.0:
-                logger.warning(f"🐌 SLOW DB CONNECTIVITY: {db_test_time:.2f}s - possible VPC/NAT gateway issue")
+                logger.warning(f"🐌 SLOW DB CONNECTIVITY: {db_test_time:.3f}s - VPC/NAT gateway issue")
+            if query_time > 10.0:
+                logger.error(f"💥 HANGING SQL QUERY: {query_time:.3f}s - likely VPC timeout or security group blocking")
 
         except Exception as db_test_error:
             db_test_error_time = time.time() - db_test_start
@@ -619,52 +656,30 @@ async def register(data: RegisterSchema, response: Response, request: Request, d
             raise
 
         # Step 3: Check for existing user
-        logger.info(f"📊 STEP 3/7: Checking existing user for {user_email}")
         user_check_start = time.time()
-
         try:
-            logger.info(f"   - Executing: SELECT User WHERE email = '{data.email[:10]}...'")
             result = await db.execute(select(User).where(User.email == data.email))
-            logger.info(f"   - Query executed, fetching result...")
             existing_user = result.scalar_one_or_none()
             user_check_time = time.time() - user_check_start
-
-            logger.info(f"✅ STEP 3/7 COMPLETE: User lookup in {user_check_time:.2f}s (exists: {existing_user is not None})")
-
-            if user_check_time > 3.0:
-                logger.warning(f"🐌 SLOW USER LOOKUP: {user_check_time:.2f}s - possible database index issue")
-
+            if user_check_time > 5.0:
+                logger.warning(f"🐌 SLOW USER LOOKUP: {user_check_time:.3f}s")
         except Exception as user_check_error:
-            user_check_error_time = time.time() - user_check_start
-            logger.error(f"💥 STEP 3/7 FAILED: User lookup after {user_check_error_time:.2f}s - {str(user_check_error)}")
-            logger.exception("User lookup exception details:")
+            logger.error(f"💥 User lookup failed: {str(user_check_error)}")
             raise
 
         if existing_user:
             logger.info(f"❌ REGISTER EMAIL EXISTS: {user_email}")
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Email already registered")
 
-        # Step 4: DeletedEmail cooldown disabled per request
-        logger.info(f"📊 STEP 4/7: Deleted email cooldown disabled")
-
-        # Step 5: Password hashing with detailed timing
-        logger.info(f"📊 STEP 5/7: Password hashing for {user_email}")
+        # Step 4: Password hashing
         password_hash_start = time.time()
-
         try:
-            logger.info(f"   - Starting bcrypt password hash...")
             hashed_password = get_password_hash(data.password)
             password_hash_time = time.time() - password_hash_start
-
-            logger.info(f"✅ STEP 5/7 COMPLETE: Password hashing in {password_hash_time:.2f}s")
-
-            if password_hash_time > 8.0:
-                logger.warning(f"🐌 SLOW PASSWORD HASH: {password_hash_time:.2f}s - high CPU load or bcrypt rounds too high")
-
+            if password_hash_time > 5.0:
+                logger.warning(f"🐌 SLOW PASSWORD HASH: {password_hash_time:.2f}s")
         except Exception as hash_error:
-            hash_error_time = time.time() - password_hash_start
-            logger.error(f"💥 STEP 5/7 FAILED: Password hashing after {hash_error_time:.2f}s - {str(hash_error)}")
-            logger.exception("Password hashing exception details:")
+            logger.error(f"💥 Password hashing failed: {str(hash_error)}")
             raise
 
         # Step 6: User creation and database commit
@@ -673,27 +688,43 @@ async def register(data: RegisterSchema, response: Response, request: Request, d
 
         try:
             logger.info(f"   - Creating User object...")
+            create_start = time.time()
             user = User(
                 email=data.email,
                 hashed_password=hashed_password,
                 name=data.name,
                 is_active=True,
             )
+            create_time = time.time() - create_start
+            logger.info(f"   - User object created in {create_time:.3f}s")
 
             logger.info(f"   - Adding user to session...")
+            add_start = time.time()
             db.add(user)
+            add_time = time.time() - add_start
+            logger.info(f"   - User added to session in {add_time:.3f}s")
 
             logger.info(f"   - Committing to database...")
+            commit_start = time.time()
             await db.commit()
+            commit_time = time.time() - commit_start
+            logger.info(f"   - Database commit completed in {commit_time:.3f}s")
 
             logger.info(f"   - Refreshing user object...")
+            refresh_start = time.time()
             await db.refresh(user)
+            refresh_time = time.time() - refresh_start
+            logger.info(f"   - User object refreshed in {refresh_time:.3f}s")
 
             db_commit_time = time.time() - db_commit_start
-            logger.info(f"✅ STEP 6/7 COMPLETE: User creation and commit in {db_commit_time:.2f}s (user_id: {user.id})")
+            logger.info(f"✅ STEP 6/7 COMPLETE: User creation and commit in {db_commit_time:.3f}s (create: {create_time:.3f}s, add: {add_time:.3f}s, commit: {commit_time:.3f}s, refresh: {refresh_time:.3f}s, user_id: {user.id})")
 
             if db_commit_time > 8.0:
-                logger.warning(f"🐌 SLOW DB COMMIT: {db_commit_time:.2f}s - possible database lock or VPC network issue")
+                logger.warning(f"🐌 SLOW DB COMMIT: {db_commit_time:.3f}s - possible database lock or VPC network issue")
+            if commit_time > 5.0:
+                logger.warning(f"🐌 SLOW DATABASE COMMIT: {commit_time:.3f}s - likely VPC/network latency or database lock")
+            if refresh_time > 2.0:
+                logger.warning(f"🐌 SLOW USER REFRESH: {refresh_time:.3f}s - database connection issue")
 
         except Exception as commit_error:
             commit_error_time = time.time() - db_commit_start

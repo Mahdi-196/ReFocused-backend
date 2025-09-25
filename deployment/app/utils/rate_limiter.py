@@ -62,12 +62,39 @@ class AdvancedRateLimiter:
     
     async def _check_redis(self, key: str, limit: int, window: int, now: float) -> Dict[str, any]:
         """Redis-based rate limiting."""
-        # Remove expired entries (older than window)
-        await self.redis.delete_expired(key, now - window)
-        
-        # Count current requests
-        current_count = await self.redis.count_keys(f"{key}:*")
-        
+        logger.info(f"🔍 RATE_LIMIT: Starting Redis check for key: {key}")
+
+        try:
+            # Remove expired entries (older than window)
+            logger.info(f"🔍 RATE_LIMIT: Removing expired entries older than {now - window}")
+            pattern = f"{key}:*"
+            keys_to_check = await self.redis._redis.keys(pattern)
+            logger.info(f"🔍 RATE_LIMIT: Found {len(keys_to_check)} keys matching pattern {pattern}")
+
+            expired_keys = []
+            for redis_key in keys_to_check:
+                key_str = redis_key.decode('utf-8') if isinstance(redis_key, bytes) else str(redis_key)
+                if ':' in key_str:
+                    timestamp_str = key_str.split(':')[-1]
+                    try:
+                        timestamp = float(timestamp_str)
+                        if timestamp < now - window:
+                            expired_keys.append(redis_key)
+                    except ValueError:
+                        continue
+
+            logger.info(f"🔍 RATE_LIMIT: Found {len(expired_keys)} expired keys to delete")
+            if expired_keys:
+                await self.redis._redis.delete(*expired_keys)
+
+            # Count current requests after cleanup
+            remaining_keys = await self.redis._redis.keys(pattern)
+            current_count = len(remaining_keys)
+            logger.info(f"🔍 RATE_LIMIT: Current count after cleanup: {current_count}/{limit}")
+        except Exception as e:
+            logger.error(f"Redis operation error: {e}, falling back to in-memory")
+            return await self._check_in_memory(key, limit, window, now)
+
         if current_count >= limit:
             return {
                 "allowed": False,
@@ -128,10 +155,18 @@ class AdvancedRateLimiter:
     ) -> None:
         """Apply rate limiting and raise HTTPException if exceeded."""
         if not settings.RATE_LIMIT_ENABLED:
+            logger.info(f"🔍 RATE_LIMIT: Rate limiting disabled, skipping {endpoint}")
             return
-            
+
+        logger.info(f"🔍 RATE_LIMIT: Applying rate limit for {endpoint} (limit: {limit}, window: {window}s)")
         key = self.get_rate_limit_key(request, endpoint)
+        logger.info(f"🔍 RATE_LIMIT: Using rate limit key: {key}")
+
+        import time
+        start_time = time.time()
         result = await self.check_rate_limit(key, limit, window)
+        duration = time.time() - start_time
+        logger.info(f"🔍 RATE_LIMIT: Rate limit check took {duration:.3f}s")
         
         if not result["allowed"]:
             # Log rate limit violation
@@ -177,19 +212,26 @@ class RateLimitConfig:
 
 async def apply_auth_rate_limit(request: Request, endpoint_type: str = "login"):
     """Apply rate limiting for authentication endpoints."""
+    logger.info(f"🔍 RATE_LIMIT: apply_auth_rate_limit called for {endpoint_type}")
     config_map = {
         "login": RateLimitConfig.LOGIN,
         "register": RateLimitConfig.REGISTER,
         "password_reset": RateLimitConfig.PASSWORD_RESET
     }
-    
+
     config = config_map.get(endpoint_type, RateLimitConfig.LOGIN)
+    logger.info(f"🔍 RATE_LIMIT: Rate limit config: {config}")
+
+    import time
+    start_time = time.time()
     await rate_limiter.apply_rate_limit(
-        request, 
+        request,
         f"auth_{endpoint_type}",
         config["limit"],
         config["window"]
     )
+    duration = time.time() - start_time
+    logger.info(f"🔍 RATE_LIMIT: apply_auth_rate_limit completed in {duration:.3f}s")
 
 async def apply_api_rate_limit(request: Request, endpoint_type: str = "general_write"):
     """Apply rate limiting for API endpoints."""

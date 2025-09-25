@@ -73,26 +73,40 @@ if os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
     if not settings.DATABASE_URL.startswith('postgresql+asyncpg://'):
         logger.warning(f"⚠️ DATABASE_URL should use 'postgresql+asyncpg://' for async operations")
 
-# Sanitize DATABASE_URL for asyncpg: convert sslmode=require -> ssl=require
+# Sanitize DATABASE_URL for asyncpg: convert postgresql -> postgresql+asyncpg and sslmode -> ssl
 def _sanitize_asyncpg_url(url: str) -> str:
     try:
         parsed = urlparse(url)
-        if parsed.scheme.startswith("postgresql+asyncpg"):
-            query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
-            changed = False
-            new_pairs = []
-            for k, v in query_pairs:
-                if k == "sslmode":
-                    k = "ssl"
-                    changed = True
-                new_pairs.append((k, v))
-            if changed:
-                new_query = urlencode(new_pairs)
-                sanitized = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
+        scheme_changed = False
+
+        # Convert postgresql:// to postgresql+asyncpg://
+        if parsed.scheme == "postgresql":
+            new_scheme = "postgresql+asyncpg"
+            scheme_changed = True
+            logger.info("🔧 Converting DATABASE_URL: postgresql:// → postgresql+asyncpg:// for async operations")
+        elif parsed.scheme.startswith("postgresql+asyncpg"):
+            new_scheme = parsed.scheme
+        else:
+            new_scheme = parsed.scheme
+
+        # Handle query parameters (sslmode -> ssl)
+        query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
+        param_changed = False
+        new_pairs = []
+        for k, v in query_pairs:
+            if k == "sslmode":
+                k = "ssl"
+                param_changed = True
                 logger.info("🔒 Adjusted DATABASE_URL query param: sslmode→ssl for asyncpg")
-                return sanitized
-    except Exception:
-        pass
+            new_pairs.append((k, v))
+
+        if scheme_changed or param_changed:
+            new_query = urlencode(new_pairs)
+            sanitized = urlunparse((new_scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
+            return sanitized
+
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to sanitize DATABASE_URL: {e}")
     return url
 
 sanitized_database_url = _sanitize_asyncpg_url(settings.DATABASE_URL)

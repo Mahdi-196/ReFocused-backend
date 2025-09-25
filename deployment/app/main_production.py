@@ -9,10 +9,23 @@ from fastapi.middleware.gzip import GZipMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.core.config import settings
-from app.api.v1.api import api_router, monitoring_router
+from app.monitoring.logging_config import setup_structured_logging, get_logger
+
+# Initialize structured logging early
+setup_structured_logging()
+logger_early = get_logger("app.main.imports")
+logger_early.info("🔧 DEBUG: Starting imports...")
+
+try:
+    from app.api.v1.api import api_router, monitoring_router
+    logger_early.info("✅ DEBUG: Successfully imported api_router and monitoring_router")
+    logger_early.info(f"🔍 DEBUG: api_router has {len(api_router.routes)} routes")
+except Exception as e:
+    logger_early.error(f"❌ DEBUG: Failed to import API routers: {e}")
+    raise
+
 from app.core.production_middleware import ProductionMiddleware
 from app.core.auth_middleware import SessionAuthenticationMiddleware
-from app.monitoring.logging_config import setup_structured_logging, get_logger
 from app.monitoring.metrics import metrics
 import os
 import asyncio
@@ -30,8 +43,6 @@ try:
 except Exception:
     OTEL_AVAILABLE = False
 
-# Initialize structured logging
-setup_structured_logging()
 logger = get_logger("app.main")
 
 # Initialize FastAPI app
@@ -144,7 +155,21 @@ async def _run_db_migrations_if_enabled():
 async def startup_event():
     """Application startup event."""
     logger.info("🚀 ReFocused API starting up...")
-    
+
+    # Debug: Log all registered routes
+    logger.info("🔍 DEBUG: Registered routes:")
+    for route in app.routes:
+        if hasattr(route, 'path') and hasattr(route, 'methods'):
+            logger.info(f"  {route.methods} {route.path}")
+        elif hasattr(route, 'path_regex'):
+            logger.info(f"  MOUNT {route.path_regex.pattern} -> {type(route)}")
+
+    # Debug: Check API router routes
+    logger.info("🔍 DEBUG: API Router (/api/v1) routes:")
+    for route in api_router.routes:
+        if hasattr(route, 'path') and hasattr(route, 'methods'):
+            logger.info(f"  {route.methods} /api/v1{route.path}")
+
     # Initialize monitoring
     metrics.set_health_status(True)
 
@@ -163,8 +188,11 @@ async def startup_event():
             logger.info("✅ Database connection successful")
         except Exception as e:
             logger.error(f"❌ Database connection failed: {str(e)}")
+            logger.info("🔧 DEBUG: Continuing startup without database for debugging...")
             metrics.set_health_status(False)
-            raise
+            # Don't raise - continue for debugging
+    else:
+        logger.info("🔧 DEBUG: DB startup disabled, skipping database connection")
     
     # Log configuration
     logger.info(f"🏃 Running in {settings.APP_ENV} mode")
