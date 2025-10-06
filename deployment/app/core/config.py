@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = Field(7, env="REFRESH_TOKEN_EXPIRE_DAYS")
     REMEMBER_ME_EXPIRE_DAYS: int = Field(30, env="REMEMBER_ME_EXPIRE_DAYS")  # Remember me duration
     PASSWORD_HASHER: str = Field("bcrypt", env="PASSWORD_HASHER")
-    BCRYPT_ROUNDS: int = Field(14, env="BCRYPT_ROUNDS")
+    BCRYPT_ROUNDS: int = Field(12, env="BCRYPT_ROUNDS")  # Reduced from 14 to 12 for 4x faster hashing (~400ms vs ~1600ms)
 
     # Cookie Settings
     COOKIE_SECURE: bool = Field(False, env="COOKIE_SECURE")  # Set to True in production with HTTPS
@@ -63,11 +63,11 @@ class Settings(BaseSettings):
     AUTH_DEFAULT_GRANT_TYPE: str = Field("password", env="AUTH_DEFAULT_GRANT_TYPE")
     AUTH_REQUIRE_GRANT_TYPE: bool = Field(False, env="AUTH_REQUIRE_GRANT_TYPE")
 
-    # Database - Optimized for Lambda
+    # Database - Optimized for Lambda and App Runner
     DATABASE_URL: str = Field(..., env="DATABASE_URL")
     DATABASE_POOL_SIZE: int = Field(5, env="DATABASE_POOL_SIZE")  # Reduced for Lambda
     DATABASE_MAX_OVERFLOW: int = Field(5, env="DATABASE_MAX_OVERFLOW")  # Reduced for Lambda
-    DATABASE_POOL_TIMEOUT: int = Field(10, env="DATABASE_POOL_TIMEOUT")  # Much faster timeout
+    DATABASE_POOL_TIMEOUT: int = Field(5, env="DATABASE_POOL_TIMEOUT")  # Reduced from 10s to 5s for fail-fast behavior
     DATABASE_POOL_RECYCLE: int = Field(300, env="DATABASE_POOL_RECYCLE")  # Recycle connections every 5 minutes
 
     # Redis Configuration
@@ -80,7 +80,12 @@ class Settings(BaseSettings):
 
     # CORS
     CORS_ALLOWED_ORIGINS: List[str] = Field(
-        default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"],
+        default_factory=lambda: [
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "https://www.refocused.app",
+            "https://refocused.app"
+        ],
         env="CORS_ALLOWED_ORIGINS"
     )
     CORS_ALLOW_CREDENTIALS: bool = Field(True, env="CORS_ALLOW_CREDENTIALS")

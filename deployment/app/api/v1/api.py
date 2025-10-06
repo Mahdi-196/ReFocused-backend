@@ -4,7 +4,7 @@ import logging
 
 from app.api.v1.endpoints import auth, goals, users, study, statistics, journal, admin, ai, voting, feedback
 from app.routers import monitoring, habits, streak, mood, dashboard, calendar, time
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, validator
 from app.services.email_service import email_service
 from app.caching.redis_cache import cache
 from app.core.config import settings
@@ -34,7 +34,14 @@ api_router.include_router(time.router, prefix="/time", tags=["time"])
 
 
 class EmailRequest(BaseModel):
-    email: EmailStr
+    email: str
+
+    @validator('email')
+    def validate_email(cls, v):
+        import re
+        if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', v):
+            raise ValueError('Invalid email format')
+        return v.lower().strip()
 
 
 def _seconds_until_midnight_utc() -> int:

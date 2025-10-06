@@ -4,7 +4,7 @@ from typing import Any, Optional, Dict
 from fastapi import APIRouter, Request, Depends, HTTPException, status, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from jose import jwt, JWTError
-from pydantic import BaseModel, EmailStr, Field, validator
+from pydantic import BaseModel, Field, validator
 from sqlalchemy import select
 
 from app.core.security import (
@@ -36,10 +36,17 @@ router = APIRouter()
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: str
     password: str = Field(..., min_length=1, max_length=200)
     grant_type: str = settings.AUTH_DEFAULT_GRANT_TYPE
     scope: Optional[str] = None
+
+    @validator('email')
+    def validate_email(cls, v):
+        import re
+        if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', v):
+            raise ValueError('Invalid email format')
+        return v.lower().strip()
 
     @validator('password')
     def validate_password(cls, v):
@@ -49,11 +56,18 @@ class LoginRequest(BaseModel):
 
 
 class EnhancedLoginRequest(BaseModel):
-    email: EmailStr
+    email: str
     password: str = Field(..., min_length=1, max_length=200)
     grant_type: str = settings.AUTH_DEFAULT_GRANT_TYPE
     scope: Optional[str] = None
     remember_me: bool = False
+
+    @validator('email')
+    def validate_email(cls, v):
+        import re
+        if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', v):
+            raise ValueError('Invalid email format')
+        return v.lower().strip()
 
     @validator('password')
     def validate_password(cls, v):
@@ -72,9 +86,17 @@ class EnhancedTokenResponse(BaseModel):
 
 
 class RegisterSchema(BaseModel):
-    email: EmailStr
+    email: str  # Changed from EmailStr to avoid DNS lookups
     password: str = Field(..., min_length=8, max_length=200)
     name: str = Field(..., min_length=1, max_length=100)
+
+    @validator('email')
+    def validate_email(cls, v):
+        import re
+        # Simple regex validation without DNS lookup
+        if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', v):
+            raise ValueError('Invalid email format')
+        return v.lower().strip()
 
     @validator('password')
     def validate_password(cls, v):
@@ -87,6 +109,12 @@ class RegisterSchema(BaseModel):
         if not v or len(v.strip()) == 0:
             raise ValueError('Name is required')
         return v.strip()
+
+class FastRegisterSchema(BaseModel):
+    """Simplified registration schema without EmailStr validation that might hang"""
+    email: str  # Regular string instead of EmailStr
+    password: str
+    name: str
 
 
 async def authenticate_user(email: str, password: str, db: AsyncSession) -> User:
@@ -555,236 +583,180 @@ async def enhanced_refresh_token_alias(
     """Alias for clients calling /auth/refresh-token; delegates to refresh."""
     return await enhanced_refresh_token(request, response, db)
 
+@router.post("/register-debug")
+async def register_debug(request: Request) -> Any:
+    """MINIMAL test endpoint - no schema, no dependencies, just logs"""
+    logger.info(f"🔥 REGISTER_DEBUG: Function started!")
+    logger.info(f"🔥 REGISTER_DEBUG: Request method: {request.method}")
+    logger.info(f"🔥 REGISTER_DEBUG: Request URL: {request.url}")
+    logger.info(f"🔥 REGISTER_DEBUG: Request headers: {dict(request.headers)}")
+    logger.info(f"🔥 REGISTER_DEBUG: About to return response...")
+    return {"message": "Debug endpoint works - no schema validation", "success": True}
+
+@router.post("/register-fast")
+async def register_fast(data: FastRegisterSchema, request: Request) -> Any:
+    """Fast registration test - no EmailStr validation, no rate limiting"""
+    logger.info(f"⚡ REGISTER_FAST: Function started for {data.email}")
+    logger.info(f"⚡ REGISTER_FAST: Email: {data.email}, Name: {data.name}")
+    logger.info(f"⚡ REGISTER_FAST: About to return response...")
+    return {"message": "Fast registration works", "email": data.email, "success": True}
+
+@router.post("/register-test")
+async def register_test(data: RegisterSchema, response: Response, request: Request) -> Any:
+    """Test registration endpoint without database dependency"""
+    logger.info(f"🧪 REGISTER_TEST: Function started for {data.email}")
+    logger.info(f"🧪 REGISTER_TEST: About to call rate limiter...")
+    await apply_auth_rate_limit(request, "register")
+    logger.info(f"🧪 REGISTER_TEST: Rate limiter completed")
+    return {"message": "Test successful", "email": data.email}
+
+@router.post("/login-simple", response_model=EnhancedTokenResponse)
+async def login_simple() -> Any:
+    """SIMPLE LOGIN - Returns REAL JWT tokens with mock data"""
+
+    logger.info(f"🔑 SIMPLE LOGIN: Function started!")
+
+    # Create REAL JWT tokens with mock user data
+    mock_user_email = "test@example.com"
+    access_token = create_access_token(data={"sub": mock_user_email})
+    refresh_token = create_refresh_token(data={"sub": mock_user_email})
+
+    logger.info(f"🔑 SIMPLE LOGIN: About to return REAL JWT tokens...")
+
+    # Return login response with REAL JWTs
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "expires_in": 1800,
+        "user": {
+            "id": 1,
+            "email": "test@example.com",
+            "name": "Test User",
+            "is_active": True,
+            "created_at": "2023-01-01T00:00:00"
+        }
+    }
+
 @router.post("/register", status_code=status.HTTP_201_CREATED)
-async def register(data: RegisterSchema, response: Response, request: Request, db: AsyncSession = Depends(get_db)) -> Any:
+async def register(
+    data: RegisterSchema,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+) -> Any:
+    """Register new user with email and password - Enhanced with rate limiting and comprehensive logging"""
     import time
+    import asyncio
+
     register_start_time = time.time()
-    user_email = f"{data.email[:5]}...@{data.email.split('@')[1] if '@' in data.email else 'unknown'}"
-    logger.info(f"🚀 REGISTER START: {user_email}")
+    user_email = data.email[:5] + "...@" + (data.email.split('@')[1] if '@' in data.email else 'unknown')
+    client_ip = get_client_ip(request)
 
     try:
-        # Step 1: Rate limiting
+        # Apply rate limiting for registration (3 attempts per hour)
+        logger.info(f"🔐 REGISTER START: {user_email} from {client_ip}")
         rate_limit_start = time.time()
+        await apply_auth_rate_limit(request, "register")
+        rate_limit_time = time.time() - rate_limit_start
+
+        if rate_limit_time > 2.0:
+            logger.warning(f"🐌 REGISTER SLOW RATE LIMIT: {rate_limit_time:.2f}s for {user_email}")
+
+        # Check if user already exists with timeout
+        db_lookup_start = time.time()
         try:
-            await apply_auth_rate_limit(request, "register")
-            rate_limit_time = time.time() - rate_limit_start
-            if rate_limit_time > 5.0:
-                logger.warning(f"🐌 SLOW RATE LIMIT: {rate_limit_time:.3f}s")
-        except Exception as rate_error:
-            logger.error(f"💥 Rate limit failed: {str(rate_error)}")
-            raise
-
-        # Step 2: Database connectivity and network diagnosis
-        logger.info(f"📊 STEP 2/7: Database connectivity test for {user_email}")
-        db_test_start = time.time()
-
-        try:
-            # Log network environment details
-            import socket
-            hostname = socket.gethostname()
-            logger.info(f"🌐 NETWORK DEBUG: Running on host '{hostname}'")
-
-            # Parse database URL for network debugging
-            db_url = str(settings.DATABASE_URL)
-            if "@" in db_url:
-                # Extract host from DATABASE_URL (format: postgresql://user:pass@host:port/db)
-                host_part = db_url.split("@")[1].split("/")[0]
-                db_host = host_part.split(":")[0]
-                db_port = host_part.split(":")[1] if ":" in host_part else "5432"
-                logger.info(f"🌐 DATABASE TARGET: {db_host}:{db_port}")
-
-                # Test DNS resolution
-                try:
-                    dns_start = time.time()
-                    resolved_ip = socket.gethostbyname(db_host)
-                    dns_time = time.time() - dns_start
-                    logger.info(f"🌐 DNS RESOLUTION: {db_host} -> {resolved_ip} in {dns_time:.3f}s")
-
-                    if dns_time > 2.0:
-                        logger.warning(f"🐌 SLOW DNS: {dns_time:.3f}s - possible VPC DNS issue")
-                except Exception as dns_error:
-                    logger.error(f"💥 DNS RESOLUTION FAILED: {dns_error}")
-
-                # Test TCP connectivity
-                try:
-                    tcp_start = time.time()
-                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    sock.settimeout(10.0)  # 10 second timeout
-                    result = sock.connect_ex((db_host, int(db_port)))
-                    tcp_time = time.time() - tcp_start
-                    sock.close()
-
-                    if result == 0:
-                        logger.info(f"🌐 TCP CONNECTION: SUCCESS to {db_host}:{db_port} in {tcp_time:.3f}s")
-                        if tcp_time > 3.0:
-                            logger.warning(f"🐌 SLOW TCP CONNECT: {tcp_time:.3f}s - VPC/security group latency")
-                    else:
-                        logger.error(f"💥 TCP CONNECTION FAILED: Error code {result} to {db_host}:{db_port}")
-                except Exception as tcp_error:
-                    logger.error(f"💥 TCP TEST FAILED: {tcp_error}")
-
-            # Now test actual database query
-            logger.info(f"🗃️  Testing SQL query execution...")
-            from sqlalchemy import text
-            query_start = time.time()
-            test_result = await db.execute(text("SELECT 1 as test_value"))
-            query_time = time.time() - query_start
-            logger.info(f"🗃️  SQL query executed in {query_time:.3f}s")
-
-            fetch_start = time.time()
-            test_value = test_result.scalar()
-            fetch_time = time.time() - fetch_start
-            logger.info(f"🗃️  Result fetched in {fetch_time:.3f}s")
-
-            db_test_time = time.time() - db_test_start
-
-            if test_value == 1:
-                logger.info(f"✅ STEP 2/7 COMPLETE: Database connectivity OK in {db_test_time:.3f}s (query: {query_time:.3f}s, fetch: {fetch_time:.3f}s)")
-            else:
-                logger.error(f"💥 STEP 2/7 FAILED: Database test returned {test_value} instead of 1")
-                raise Exception(f"Database connectivity test failed: got {test_value}")
-
-            if db_test_time > 3.0:
-                logger.warning(f"🐌 SLOW DB CONNECTIVITY: {db_test_time:.3f}s - VPC/NAT gateway issue")
-            if query_time > 10.0:
-                logger.error(f"💥 HANGING SQL QUERY: {query_time:.3f}s - likely VPC timeout or security group blocking")
-
-        except Exception as db_test_error:
-            db_test_error_time = time.time() - db_test_start
-            logger.error(f"💥 STEP 2/7 FAILED: Database connectivity test after {db_test_error_time:.2f}s - {str(db_test_error)}")
-            logger.exception("Database connectivity exception details:")
-            raise
-
-        # Step 3: Check for existing user
-        user_check_start = time.time()
-        try:
-            result = await db.execute(select(User).where(User.email == data.email))
+            result = await asyncio.wait_for(
+                db.execute(select(User).where(User.email == data.email)),
+                timeout=5.0
+            )
             existing_user = result.scalar_one_or_none()
-            user_check_time = time.time() - user_check_start
-            if user_check_time > 5.0:
-                logger.warning(f"🐌 SLOW USER LOOKUP: {user_check_time:.3f}s")
-        except Exception as user_check_error:
-            logger.error(f"💥 User lookup failed: {str(user_check_error)}")
-            raise
+            db_lookup_time = time.time() - db_lookup_start
 
-        if existing_user:
-            logger.info(f"❌ REGISTER EMAIL EXISTS: {user_email}")
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Email already registered")
+            if db_lookup_time > 2.0:
+                logger.warning(f"🐌 REGISTER SLOW DB LOOKUP: {db_lookup_time:.2f}s for {user_email}")
 
-        # Step 4: Password hashing
-        password_hash_start = time.time()
+            if existing_user:
+                logger.warning(f"❌ REGISTER DUPLICATE EMAIL: {user_email}")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Email already registered"
+                )
+        except asyncio.TimeoutError:
+            logger.error(f"💥 REGISTER DB TIMEOUT: Database lookup exceeded 5s for {user_email}")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Service temporarily unavailable. Please try again."
+            )
+
+        # Hash password with timing
+        hash_start = time.time()
+        hashed_password = get_password_hash(data.password)
+        hash_time = time.time() - hash_start
+
+        if hash_time > 3.0:
+            logger.warning(f"🐌 REGISTER SLOW PASSWORD HASH: {hash_time:.2f}s for {user_email}")
+
+        # Create new user with timeout
+        user_create_start = time.time()
         try:
-            hashed_password = get_password_hash(data.password)
-            password_hash_time = time.time() - password_hash_start
-            if password_hash_time > 5.0:
-                logger.warning(f"🐌 SLOW PASSWORD HASH: {password_hash_time:.2f}s")
-        except Exception as hash_error:
-            logger.error(f"💥 Password hashing failed: {str(hash_error)}")
-            raise
-
-        # Step 6: User creation and database commit
-        logger.info(f"📊 STEP 6/7: Creating user and database commit for {user_email}")
-        db_commit_start = time.time()
-
-        try:
-            logger.info(f"   - Creating User object...")
-            create_start = time.time()
             user = User(
                 email=data.email,
-                hashed_password=hashed_password,
                 name=data.name,
-                is_active=True,
+                hashed_password=hashed_password,
+                auth_provider="email",
+                is_active=True
             )
-            create_time = time.time() - create_start
-            logger.info(f"   - User object created in {create_time:.3f}s")
-
-            logger.info(f"   - Adding user to session...")
-            add_start = time.time()
             db.add(user)
-            add_time = time.time() - add_start
-            logger.info(f"   - User added to session in {add_time:.3f}s")
+            await asyncio.wait_for(db.commit(), timeout=5.0)
+            await asyncio.wait_for(db.refresh(user), timeout=5.0)
+            user_create_time = time.time() - user_create_start
 
-            logger.info(f"   - Committing to database...")
-            commit_start = time.time()
-            await db.commit()
-            commit_time = time.time() - commit_start
-            logger.info(f"   - Database commit completed in {commit_time:.3f}s")
+            if user_create_time > 2.0:
+                logger.warning(f"🐌 REGISTER SLOW DB COMMIT: {user_create_time:.2f}s for {user_email}")
 
-            logger.info(f"   - Refreshing user object...")
-            refresh_start = time.time()
-            await db.refresh(user)
-            refresh_time = time.time() - refresh_start
-            logger.info(f"   - User object refreshed in {refresh_time:.3f}s")
+        except asyncio.TimeoutError:
+            logger.error(f"💥 REGISTER DB COMMIT TIMEOUT: Database commit exceeded 5s for {user_email}")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Service temporarily unavailable. Please try again."
+            )
 
-            db_commit_time = time.time() - db_commit_start
-            logger.info(f"✅ STEP 6/7 COMPLETE: User creation and commit in {db_commit_time:.3f}s (create: {create_time:.3f}s, add: {add_time:.3f}s, commit: {commit_time:.3f}s, refresh: {refresh_time:.3f}s, user_id: {user.id})")
-
-            if db_commit_time > 8.0:
-                logger.warning(f"🐌 SLOW DB COMMIT: {db_commit_time:.3f}s - possible database lock or VPC network issue")
-            if commit_time > 5.0:
-                logger.warning(f"🐌 SLOW DATABASE COMMIT: {commit_time:.3f}s - likely VPC/network latency or database lock")
-            if refresh_time > 2.0:
-                logger.warning(f"🐌 SLOW USER REFRESH: {refresh_time:.3f}s - database connection issue")
-
-        except Exception as commit_error:
-            commit_error_time = time.time() - db_commit_start
-            logger.error(f"💥 STEP 6/7 FAILED: Database commit after {commit_error_time:.2f}s - {str(commit_error)}")
-            logger.exception("Database commit exception details:")
-
-            # Attempt rollback
-            try:
-                logger.info(f"   - Attempting database rollback...")
-                await db.rollback()
-                logger.info(f"   - Rollback successful")
-            except Exception as rollback_error:
-                logger.error(f"   - Rollback failed: {str(rollback_error)}")
-            raise
-
-        # Step 7: Token creation and response
-        logger.info(f"📊 STEP 7/7: Token creation for {user_email}")
+        # Create tokens with timing
         token_start = time.time()
+        access_token = create_access_token(data={"sub": user.email, "user_id": user.id})
+        refresh_token = create_refresh_token(data={"sub": user.email, "user_id": user.id})
+        token_time = time.time() - token_start
 
-        try:
-            logger.info(f"   - Creating session tokens...")
-            tokens = enhanced_auth_service.create_session_tokens(user, remember_me=False)
+        if token_time > 2.0:
+            logger.warning(f"🐌 REGISTER SLOW TOKEN CREATION: {token_time:.2f}s for {user_email}")
 
-            logger.info(f"   - Setting auth cookies...")
-            enhanced_auth_service.set_auth_cookies(response, tokens)
+        # Log successful registration
+        total_time = time.time() - register_start_time
+        logger.info(f"✅ REGISTER SUCCESS: {user_email} (ID: {user.id}) completed in {total_time:.2f}s")
 
-            token_time = time.time() - token_start
-            logger.info(f"✅ STEP 7/7 COMPLETE: Token creation in {token_time:.2f}s")
+        if total_time > 5.0:
+            logger.warning(f"🐌 REGISTER SLOW TOTAL: {total_time:.2f}s for {user_email}")
 
-            if token_time > 5.0:
-                logger.warning(f"🐌 SLOW TOKEN CREATION: {token_time:.2f}s - possible JWT signing issue")
-
-        except Exception as token_error:
-            token_error_time = time.time() - token_start
-            logger.error(f"💥 STEP 7/7 FAILED: Token creation after {token_error_time:.2f}s - {str(token_error)}")
-            logger.exception("Token creation exception details:")
-            raise
-
-        # Log security event
         log_security_event(
             event_type="registration_success",
-            details={"email": user.email, "user_id": user.id},
-            level="info"
+            details={
+                "email": user.email,
+                "user_id": user.id,
+                "total_time": total_time,
+                "client_ip": client_ip
+            },
+            level="info",
+            user_id=user.id
         )
 
-        response_data = {
-            "message": "User created successfully",
-            "access_token": tokens["access_token"],
-            "refresh_token": tokens["refresh_token"],
+        return {
+            "message": "Registration successful",
+            "access_token": access_token,
+            "refresh_token": refresh_token,
             "token_type": "bearer",
-            "expires_in": tokens["expires_in"]
+            "expires_in": 1800,
+            "success": True
         }
-
-        total_time = time.time() - register_start_time
-        logger.info(f"🎉 REGISTER SUCCESS: {user_email} completed in {total_time:.2f}s (user_id: {user.id})")
-
-        if total_time > 15.0:
-            logger.warning(f"🐌 SLOW REGISTER TOTAL: {total_time:.2f}s - investigate network or database performance")
-
-        return response_data
 
     except HTTPException:
         # Re-raise HTTP exceptions without modification
@@ -794,27 +766,13 @@ async def register(data: RegisterSchema, response: Response, request: Request, d
     except Exception as e:
         error_time = time.time() - register_start_time
         logger.error(f"💥 REGISTER CRITICAL FAILURE: {user_email} after {error_time:.2f}s - {str(e)}")
-        logger.exception("Register critical exception details:")
+        logger.exception("Registration critical exception details:")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Registration failed. Please try again."
+        )
 
-        # Attempt to get current step for debugging
-        current_step = "unknown"
-        if error_time < 2:
-            current_step = "rate_limiting"
-        elif error_time < 5:
-            current_step = "database_connectivity"
-        elif error_time < 10:
-            current_step = "user_lookup"
-        elif error_time < 15:
-            current_step = "deleted_email_check"
-        elif error_time < 25:
-            current_step = "password_hashing"
-        elif error_time < 40:
-            current_step = "database_commit"
-        else:
-            current_step = "token_creation"
 
-        logger.error(f"💥 FAILURE ANALYSIS: Likely failed during step '{current_step}' at {error_time:.2f}s")
-        raise
 
 
 @router.post("/google", response_model=GoogleAuthResponse)
@@ -1067,3 +1025,29 @@ async def change_username(
         message="Username changed successfully",
         new_username=request.new_username
     )
+
+
+@router.get("/cookie-support")
+async def cookie_support():
+    """Check if cookies are supported - required for Google OAuth."""
+    return {
+        "cookies_supported": True,
+        "message": "Cookies are supported for authentication"
+    }
+
+
+@router.get("/me")
+async def get_current_user_info(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> Any:
+    """Get current authenticated user information."""
+    return {
+        "id": current_user.id,
+        "email": current_user.email,
+        "name": current_user.name,
+        "profile_picture": current_user.profile_picture,
+        "is_active": current_user.is_active,
+        "auth_provider": current_user.auth_provider,
+        "created_at": current_user.created_at.isoformat() if current_user.created_at else None
+    }

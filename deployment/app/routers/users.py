@@ -8,16 +8,16 @@ from app.db.database import get_db
 from app.db.models import User, Goal2Week, GoalLongTerm, Habit, MoodEntry, StudySet, Mantra, JournalCollection
 from app.core.auth import get_current_active_user
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/user", tags=["User"])
 
 class UserResponse(BaseModel):
     id: int
-    email: EmailStr
+    email: str
     name: str = None
     profile_picture: str = None
-    
+
     class Config:
         from_attributes = True
 

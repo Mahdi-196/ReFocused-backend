@@ -96,6 +96,9 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 # Include API routers
 app.include_router(api_router, prefix="/api/v1")
 
+# Backward compatibility: Include API router again without v1 prefix for legacy frontend
+app.include_router(api_router, prefix="/api")
+
 # Include monitoring routes at root level (no prefix)
 app.include_router(monitoring_router)
 
@@ -231,4 +234,9 @@ if __name__ == "__main__":
         port=8000,
         reload=not settings.is_production(),
         log_level="info" if settings.is_production() else "debug"
-    ) 
+    ) # Build cache breaker Fri Sep 26 12:23:41 MST 2025
+# Build cache breaker Fri Sep 26 13:49:29 MST 2025
+# Debug endpoints build: Fri Sep 26 14:17:27 MST 2025
+# Diagnostic register build: Fri Sep 26 14:21:12 MST 2025
+# Fresh deployment build: Fri Sep 26 14:27:09 MST 2025
+# LimitExceededException fix build: Fri Sep 26 17:27:25 MST 2025

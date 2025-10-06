@@ -49,11 +49,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
     
     def is_public_path(self, path: str) -> bool:
         """Check if path is publicly accessible."""
-        result = any(path.startswith(public_path) for public_path in self.public_paths)
-        logger.info(f"🔍 AUTH_MIDDLEWARE: is_public_path({path}) = {result}")
-        if not result:
-            logger.info(f"🔍 AUTH_MIDDLEWARE: Public paths: {self.public_paths}")
-        return result
+        return any(path.startswith(public_path) for public_path in self.public_paths)
     
     def is_api_path(self, path: str) -> bool:
         """Check if path is an API endpoint."""
@@ -66,52 +62,30 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         """Process authentication for each request."""
 
-        import time
-        logger.info(f"🔍 AUTH_MIDDLEWARE: Starting auth check for {request.method} {request.url.path}")
-        auth_start = time.time()
-
         path = request.url.path
         method = request.method
 
         # Skip OPTIONS requests (CORS preflight)
         if method == "OPTIONS":
-            logger.info(f"🔍 AUTH_MIDDLEWARE: Skipping OPTIONS request")
             return await call_next(request)
 
         # Skip public paths
         if self.is_public_path(path):
-            logger.info(f"🔍 AUTH_MIDDLEWARE: Skipping public path: {path}")
             return await call_next(request)
-        
+
         # Create response object to potentially set cookies
         response = None
         user = None
-        
+
         # Check authentication
-        logger.info(f"🔍 AUTH_MIDDLEWARE: Creating database session...")
-        db_start = time.time()
-
         async with async_session() as db:
-            db_time = time.time() - db_start
-            logger.info(f"🔍 AUTH_MIDDLEWARE: DB session created in {db_time:.3f}s")
-
             try:
-                logger.info(f"🔍 AUTH_MIDDLEWARE: Calling enhanced_auth_service...")
-                auth_service_start = time.time()
-
                 # Create a temporary response to collect cookies
                 temp_response = Response()
                 user = await enhanced_auth_service.get_current_user_from_request(
                     request, temp_response, db
                 )
 
-                auth_service_time = time.time() - auth_service_start
-                logger.info(f"🔍 AUTH_MIDDLEWARE: Enhanced auth service took {auth_service_time:.3f}s")
-                
-                # Debug logging for API paths
-                if self.is_api_path(path):
-                    logger.info(f"API path {path}: user={'found' if user else 'not found'}")
-                
                 # If we got a user and cookies were set (token refresh), we need to forward them
                 if temp_response.headers.get("set-cookie"):
                     # Process the request first
@@ -120,7 +94,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                     for cookie_header in temp_response.headers.getlist("set-cookie"):
                         response.headers.append("set-cookie", cookie_header)
                     return response
-                
+
             except Exception as e:
                 logger.error(f"Auth middleware error: {str(e)}")
                 user = None
@@ -146,17 +120,11 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         # User is authenticated, proceed with request
         # Store user in request state for easy access in endpoints
         request.state.user = user
-        
+
         # Process the request
         if response is None:
-            logger.info(f"🔍 AUTH_MIDDLEWARE: Calling call_next for authenticated user...")
-            call_start = time.time()
             response = await call_next(request)
-            call_time = time.time() - call_start
-            logger.info(f"🔍 AUTH_MIDDLEWARE: call_next took {call_time:.3f}s")
 
-        total_time = time.time() - auth_start
-        logger.info(f"🔍 AUTH_MIDDLEWARE: Total auth middleware time: {total_time:.3f}s")
         return response
 
 class SessionAuthenticationMiddleware(BaseHTTPMiddleware):
@@ -164,10 +132,6 @@ class SessionAuthenticationMiddleware(BaseHTTPMiddleware):
     
     async def dispatch(self, request: Request, call_next):
         """Handle session authentication and automatic refresh."""
-
-        import time
-        logger.info(f"🔍 SESSION_AUTH: Starting session auth for {request.method} {request.url.path}")
-        session_start = time.time()
 
         # Skip for certain paths
         path = request.url.path
@@ -177,7 +141,6 @@ class SessionAuthenticationMiddleware(BaseHTTPMiddleware):
             path.startswith("/redoc") or
             path.startswith("/openapi.json") or
             path.startswith("/api/v1/auth/")):  # Skip ALL auth endpoints
-            logger.info(f"🔍 SESSION_AUTH: Skipping auth path: {path}")
             return await call_next(request)
         
         # CSRF protection for cookie-only flows on state-changing requests

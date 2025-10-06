@@ -251,20 +251,20 @@ async def update_user_avatar(
 ) -> AvatarResponse:
     """
     Update user's avatar configuration and profile picture.
-    Supports all avatar styles: Open Peeps, Adventurer, Lorelei, Croodles, 
+    Supports all avatar styles: Open Peeps, Adventurer, Lorelei, Croodles,
     Notionists, Pixel Art, RoboHash Robots, RoboHash Monsters.
     """
     try:
         # Generate avatar URL based on style and configuration
         avatar_url = _generate_avatar_url(avatar_data.avatar_config)
-        
+
         # Store the avatar URL in the user's profile_picture field
         current_user.profile_picture = avatar_url
-        
+
         # Commit changes to database
         await db.commit()
         await db.refresh(current_user)
-        
+
         # Log avatar update for security tracking
         log_security_event(
             event_type="avatar_update",
@@ -275,16 +275,18 @@ async def update_user_avatar(
             level="info",
             user_id=current_user.id
         )
-        
+
         return AvatarResponse(
             success=True,
             message="Avatar updated successfully",
             avatar_url=avatar_url,
             avatar_config=avatar_data.avatar_config
         )
-        
+
     except Exception as e:
-        logger.error(f"Failed to update avatar for user {current_user.id}: {str(e)}")
+        # Safe error logging - use getattr to handle cases where current_user might not be defined
+        user_id_for_logging = getattr(current_user, 'id', 'unknown') if 'current_user' in locals() else 'unknown'
+        logger.error(f"Failed to update avatar for user {user_id_for_logging}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update avatar"

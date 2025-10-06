@@ -84,9 +84,7 @@ async def get_chat_quota(
     summary="Get Quote of the Day",
     description="Retrieve daily inspirational quote from historical figures with caching"
 )
-async def get_quote_of_day(
-    current_user: User = Depends(get_current_user)
-) -> QuoteResponse:
+async def get_quote_of_day() -> QuoteResponse:
     """Get daily inspirational quote from AWS Lambda with caching"""
     try:
         result = await ai_service.get_quote_of_day()
@@ -120,9 +118,7 @@ async def get_quote_of_day(
     summary="Get Word of the Day",
     description="Retrieve daily vocabulary word with anti-repetition logic"
 )
-async def get_word_of_day(
-    current_user: User = Depends(get_current_user)
-) -> WordResponse:
+async def get_word_of_day() -> WordResponse:
     """Get daily vocabulary word from AWS Lambda with anti-repetition"""
     try:
         result = await ai_service.get_word_of_day()
@@ -156,9 +152,7 @@ async def get_word_of_day(
     summary="Get Mind Fuel",
     description="Retrieve comprehensive daily content with 5 sections for productivity and mindfulness"
 )
-async def get_mind_fuel(
-    current_user: User = Depends(get_current_user)
-) -> MindFuelResponse:
+async def get_mind_fuel() -> MindFuelResponse:
     """Get daily mind fuel content from AWS Lambda"""
     try:
         result = await ai_service.get_mind_fuel()
@@ -452,9 +446,7 @@ async def get_scheduler_status(
     summary="Get Weekly Writing Prompts",
     description="Retrieve 5 weekly writing prompts for journal reflection with 7-day caching"
 )
-async def get_writing_prompts(
-    current_user: User = Depends(get_current_user)
-) -> WritingPromptsResponse:
+async def get_writing_prompts() -> WritingPromptsResponse:
     """Get weekly writing prompts from AWS Lambda with caching"""
     try:
         result = await ai_service.get_writing_prompts()
@@ -488,9 +480,7 @@ async def get_writing_prompts(
     summary="Get Weekly AI Suggestions",
     description="Retrieve 4 weekly AI assistance prompts with 7-day caching"
 )
-async def get_ai_suggestions(
-    current_user: User = Depends(get_current_user)
-) -> AiSuggestionsResponse:
+async def get_ai_suggestions() -> AiSuggestionsResponse:
     """Get weekly AI suggestions from AWS Lambda with caching"""
     try:
         result = await ai_service.get_ai_suggestions()
@@ -524,9 +514,7 @@ async def get_ai_suggestions(
     summary="Get Weekly Theme",
     description="Retrieve the weekly theme for journal reflection with 7-day caching"
 )
-async def get_weekly_theme(
-    current_user: User = Depends(get_current_user)
-) -> WeeklyThemeResponse:
+async def get_weekly_theme() -> WeeklyThemeResponse:
     """Get weekly theme from AWS Lambda with caching"""
     try:
         result = await ai_service.get_weekly_theme()
@@ -560,10 +548,8 @@ async def get_weekly_theme(
     summary="Get Weekly Theme (GET)",
     description="Retrieve the weekly theme (GET alias for compatibility)"
 )
-async def get_weekly_theme_get(
-    current_user: User = Depends(get_current_user)
-) -> WeeklyThemeResponse:
-    return await get_weekly_theme(current_user)
+async def get_weekly_theme_get() -> WeeklyThemeResponse:
+    return await get_weekly_theme()
 
 @router.get(
     "/health",

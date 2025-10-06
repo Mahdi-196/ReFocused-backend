@@ -2,19 +2,26 @@
 Email subscription schemas for the ReFocused API.
 """
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field, validator
 from typing import Optional
 from datetime import datetime
+import re
 
 
 class EmailSubscriptionRequest(BaseModel):
     """Request model for email subscription."""
-    email: EmailStr = Field(..., description="Email address to subscribe")
+    email: str = Field(..., description="Email address to subscribe")
     source: Optional[str] = Field("website", description="Source of the subscription")
     referrer: Optional[str] = Field(None, description="Referrer URL")
     utm_source: Optional[str] = Field(None, description="UTM source parameter")
     utm_medium: Optional[str] = Field(None, description="UTM medium parameter")
     utm_campaign: Optional[str] = Field(None, description="UTM campaign parameter")
+
+    @validator('email')
+    def validate_email(cls, v):
+        if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', v):
+            raise ValueError('Invalid email format')
+        return v.lower().strip()
 
 
 class EmailSubscriptionResponse(BaseModel):
@@ -29,7 +36,13 @@ class EmailSubscriptionResponse(BaseModel):
 
 class EmailUnsubscribeRequest(BaseModel):
     """Request model for email unsubscription."""
-    email: EmailStr = Field(..., description="Email address to unsubscribe")
+    email: str = Field(..., description="Email address to unsubscribe")
+
+    @validator('email')
+    def validate_email(cls, v):
+        if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', v):
+            raise ValueError('Invalid email format')
+        return v.lower().strip()
 
 
 class EmailUnsubscribeResponse(BaseModel):
@@ -43,7 +56,13 @@ class EmailUnsubscribeResponse(BaseModel):
 
 class EmailStatusRequest(BaseModel):
     """Request model for checking email subscription status."""
-    email: EmailStr = Field(..., description="Email address to check status for")
+    email: str = Field(..., description="Email address to check status for")
+
+    @validator('email')
+    def validate_email(cls, v):
+        if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', v):
+            raise ValueError('Invalid email format')
+        return v.lower().strip()
 
 
 class EmailStatusResponse(BaseModel):

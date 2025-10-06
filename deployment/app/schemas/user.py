@@ -1,12 +1,20 @@
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field, validator
 from datetime import datetime
 from app.core.config import settings
+import re
 
 class UserBase(BaseModel):
-    email: EmailStr
+    email: str
     name: Optional[str] = None
     is_active: Optional[bool] = True
+
+    @validator('email')
+    def validate_email(cls, v):
+        # Simple regex validation without DNS lookup
+        if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', v):
+            raise ValueError('Invalid email format')
+        return v.lower().strip()
 
 class UserCreate(UserBase):
     password: str = Field(..., min_length=8, max_length=128)
@@ -16,7 +24,7 @@ class UserUpdate(UserBase):
 
 class UserResponse(BaseModel):
     id: int
-    email: EmailStr
+    email: str
     name: Optional[str] = None
     is_active: bool
     created_at: datetime

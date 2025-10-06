@@ -20,11 +20,14 @@ logger = logging.getLogger("auth")
 # Valid test tokens for development and testing
 VALID_TEST_TOKENS = ['test-token-for-cache-testing']
 
-# Using bcrypt with enhanced security
+# Using bcrypt with optimized rounds for cloud environments
+# Using 10 rounds for sub-second hashing in AWS App Runner
+import os
+bcrypt_rounds = 10 if os.getenv('AWS_LAMBDA_FUNCTION_NAME') or os.getenv('DOCKER_ENV') else 12
 pwd_context = CryptContext(
     schemes=["bcrypt"],
     deprecated="auto",
-    bcrypt__rounds=12
+    bcrypt__rounds=bcrypt_rounds
 )
 
 # OAuth2 setup

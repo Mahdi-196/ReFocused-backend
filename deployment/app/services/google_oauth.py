@@ -46,11 +46,18 @@ class GoogleOAuthService:
         try:
             # Verify the token with Google's servers using the official library
             # This validates signature, expiration, issuer, and audience
+            # Create request with timeout to avoid hanging
+            import urllib3
+            http = urllib3.PoolManager(timeout=urllib3.Timeout(total=10))
+            request = requests.Request(http=http)
+
+            logger.info(f"Verifying Google token with client_id: {self.client_id[:20]}...")
             idinfo = id_token.verify_oauth2_token(
-                token, 
-                requests.Request(), 
+                token,
+                request,
                 self.client_id
             )
+            logger.info("Google token verification completed successfully")
             
             # Verify the token was issued by Google
             if idinfo['iss'] not in ['accounts.google.com', 'https://accounts.google.com']:
