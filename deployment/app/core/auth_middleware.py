@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import logging
 from typing import Optional, List
 import re
+import time
 
 from app.core.enhanced_auth import enhanced_auth_service
 from app.db.database import async_session
@@ -61,22 +62,22 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
     
     async def dispatch(self, request: Request, call_next):
         """Process authentication for each request."""
-
+        
         path = request.url.path
         method = request.method
-
+        
         # Skip OPTIONS requests (CORS preflight)
         if method == "OPTIONS":
             return await call_next(request)
-
+        
         # Skip public paths
         if self.is_public_path(path):
             return await call_next(request)
-
+        
         # Create response object to potentially set cookies
         response = None
         user = None
-
+        
         # Check authentication
         async with async_session() as db:
             try:
@@ -85,7 +86,11 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                 user = await enhanced_auth_service.get_current_user_from_request(
                     request, temp_response, db
                 )
-
+                
+                # Debug logging for API paths
+                if self.is_api_path(path):
+                    logger.info(f"API path {path}: user={'found' if user else 'not found'}")
+                
                 # If we got a user and cookies were set (token refresh), we need to forward them
                 if temp_response.headers.get("set-cookie"):
                     # Process the request first
@@ -94,10 +99,11 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                     for cookie_header in temp_response.headers.getlist("set-cookie"):
                         response.headers.append("set-cookie", cookie_header)
                     return response
-
+                
             except Exception as e:
                 logger.error(f"Auth middleware error: {str(e)}")
                 user = None
+            
         
         # Handle unauthenticated requests
         if not user:
@@ -120,11 +126,11 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         # User is authenticated, proceed with request
         # Store user in request state for easy access in endpoints
         request.state.user = user
-
+        
         # Process the request
         if response is None:
             response = await call_next(request)
-
+        
         return response
 
 class SessionAuthenticationMiddleware(BaseHTTPMiddleware):
@@ -132,17 +138,16 @@ class SessionAuthenticationMiddleware(BaseHTTPMiddleware):
     
     async def dispatch(self, request: Request, call_next):
         """Handle session authentication and automatic refresh."""
-
+        
         # Skip for certain paths
         path = request.url.path
-        if (request.method == "OPTIONS" or
-            path.startswith("/health") or
+        if (request.method == "OPTIONS" or 
+            path.startswith("/health") or 
             path.startswith("/docs") or
             path.startswith("/redoc") or
-            path.startswith("/openapi.json") or
-            path.startswith("/api/v1/auth/")):  # Skip ALL auth endpoints
+            path.startswith("/openapi.json")):
             return await call_next(request)
-        
+
         # CSRF protection for cookie-only flows on state-changing requests
         if settings.CSRF_ENABLED and request.method in ("POST", "PUT", "PATCH", "DELETE"):
             auth_header = request.headers.get("Authorization", "")

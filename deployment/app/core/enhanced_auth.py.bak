@@ -68,7 +68,9 @@ class EnhancedAuthService:
         samesite_value = settings.COOKIE_SAMESITE
         if (samesite_value or "").lower() == "none" and not is_secure:
             samesite_value = "lax"
+            logger.info(f"🍪 Cookie config: SameSite changed from 'none' to 'lax' (secure={is_secure})")
 
+        logger.info(f"🍪 Setting auth cookies: secure={is_secure}, samesite={samesite_value}, domain={settings.COOKIE_DOMAIN}, max_age={max_age}s")
 
         # Set access token cookie
         response.set_cookie(
@@ -121,6 +123,7 @@ class EnhancedAuthService:
                 path=settings.COOKIE_PATH
             )
 
+        logger.info(f"✅ Set 4 auth cookies: access_token, refresh_token, auth_session, csrf_token")
     
     def clear_auth_cookies(self, response: Response) -> None:
         """Clear all authentication cookies."""

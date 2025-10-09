@@ -1,5 +1,6 @@
 import logging
 from typing import Optional, Dict, Any
+import asyncio
 from google.auth.transport import requests
 from google.oauth2 import id_token
 from google.auth.exceptions import GoogleAuthError
@@ -46,18 +47,15 @@ class GoogleOAuthService:
         try:
             # Verify the token with Google's servers using the official library
             # This validates signature, expiration, issuer, and audience
-            # Create request with timeout to avoid hanging
-            import urllib3
-            http = urllib3.PoolManager(timeout=urllib3.Timeout(total=10))
-            request = requests.Request(http=http)
+            # Run in a thread with a strict timeout to prevent Lambda hangs
+            def _verify_sync() -> Dict[str, Any]:
+                return id_token.verify_oauth2_token(
+                    token,
+                    requests.Request(),
+                    self.client_id,
+                )
 
-            logger.info(f"Verifying Google token with client_id: {self.client_id[:20]}...")
-            idinfo = id_token.verify_oauth2_token(
-                token,
-                request,
-                self.client_id
-            )
-            logger.info("Google token verification completed successfully")
+            idinfo = await asyncio.wait_for(asyncio.to_thread(_verify_sync), timeout=8)
             
             # Verify the token was issued by Google
             if idinfo['iss'] not in ['accounts.google.com', 'https://accounts.google.com']:

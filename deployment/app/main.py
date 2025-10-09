@@ -73,9 +73,57 @@ logger.info("✅ FastAPI application created successfully")
 
 # HTTPS will be handled by AWS infrastructure (ALB/CloudFront)
 
-# CORS disabled - API Gateway handles CORS now
-logger.info("🌐 CORS middleware disabled - API Gateway handles CORS")
-logger.info("✅ CORS handled by API Gateway")
+# --- START OF DEBUG CODE FOR CORS ---
+import os
+
+# Get the comma-separated string of origins from the environment variable
+allowed_origins_str = os.getenv("CORS_ALLOWED_ORIGINS", "")
+# 1. Print the raw value from the environment variable
+print(f"--- DEBUG: CORS_ALLOWED_ORIGINS from env: '{allowed_origins_str}'")
+logger.info(f"--- DEBUG: CORS_ALLOWED_ORIGINS from env: '{allowed_origins_str}'")
+
+# Parse the JSON list from environment variable
+cors_origins = []
+if allowed_origins_str:
+    try:
+        import json
+        cors_origins = json.loads(allowed_origins_str)
+        print(f"--- DEBUG: Parsed CORS origins from JSON: {cors_origins}")
+        logger.info(f"--- DEBUG: Parsed CORS origins from JSON: {cors_origins}")
+    except json.JSONDecodeError:
+        # Fallback to comma-separated parsing
+        cors_origins = [origin.strip() for origin in allowed_origins_str.split(',') if origin.strip()]
+        print(f"--- DEBUG: Parsed CORS origins from CSV: {cors_origins}")
+        logger.info(f"--- DEBUG: Parsed CORS origins from CSV: {cors_origins}")
+
+# Always include production URLs + development + Google + environment configured origins
+final_cors_origins = [
+    "https://www.refocused.app",
+    "https://refocused.app",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://accounts.google.com"
+] + cors_origins + settings.CORS_ALLOWED_ORIGINS
+
+# Remove duplicates while preserving order
+final_cors_origins = list(dict.fromkeys(final_cors_origins))
+# 2. Print the final list that will be used
+print(f"--- DEBUG: Final CORS origins list: {final_cors_origins}")
+logger.info(f"--- DEBUG: Final CORS origins list: {final_cors_origins}")
+
+# Add CORS middleware for App Runner (not API Gateway!)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=final_cors_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"],
+    allow_headers=["Accept", "Accept-Language", "Content-Language", "Content-Type", "Authorization", "X-Requested-With", "X-CSRFToken", "X-CSRF-Token", "Cache-Control", "Pragma", "Origin", "Referer", "User-Agent", "X-Refresh-Token", "X-App-Env", "X-Client-Version", "X-User-Timezone", "Cookie"],
+)
+
+# 3. Print a confirmation that the middleware was added
+print("--- DEBUG: CORSMiddleware has been added to the app for App Runner.")
+logger.info("--- DEBUG: CORSMiddleware has been added to the app for App Runner.")
+# --- END OF DEBUG CODE ---
 
 # Production-optimized middleware - minimal logging
 if settings.is_development():
@@ -198,10 +246,10 @@ async def options_handler(request: Request):
     """Handle all OPTIONS requests with proper CORS headers"""
     origin = request.headers.get("origin")
     
-    # Always include production URLs + development + Google
+    # Always include production URLs + development + Google + environment configured origins
     allowed_origins = [
         "https://www.refocused.app",
-        "https://refocused.app", 
+        "https://refocused.app",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "https://accounts.google.com"
@@ -234,8 +282,8 @@ async def options_handler(request: Request):
     
     return response
 
-# CORS completely disabled - API Gateway handles ALL CORS
-logger.info("🌐 All CORS middleware removed - API Gateway handles everything")
+# CORS now properly configured for App Runner deployment
+logger.info("🌐 CORS middleware configured for App Runner")
 
 # Add final startup confirmation
 logger.info("🎉 FastAPI application startup completed successfully")
@@ -246,14 +294,17 @@ logger.info("📡 Ready to handle requests via API Gateway")
 async def cors_middleware(request: Request, call_next):
     origin = request.headers.get("origin")
     
-    # Always include production URLs + development + Google
+    # Always include production URLs + development + Google + environment configured origins
     allowed_origins = [
         "https://www.refocused.app",
-        "https://refocused.app", 
+        "https://refocused.app",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "https://accounts.google.com"
-    ]
+    ] + settings.CORS_ALLOWED_ORIGINS
+
+    # Remove duplicates while preserving order
+    allowed_origins = list(dict.fromkeys(allowed_origins))
     
     response = await call_next(request)
     

@@ -111,6 +111,7 @@ def setup_structured_logging():
     if settings.is_production():
         log_path = '/var/log/refocused/app.log'
         if os.environ.get('AWS_LAMBDA_FUNCTION_NAME') or os.environ.get('AWS_EXECUTION_ENV'):
+            # Use writable temp directory on Lambda
             log_path = '/tmp/app.log'
         try:
             file_handler = logging.FileHandler(log_path)
@@ -118,6 +119,7 @@ def setup_structured_logging():
             file_handler.setLevel(log_level)
             root_logger.addHandler(file_handler)
         except OSError:
+            # If file handler cannot be created, continue with console logging only
             pass
     
     # Configure specific loggers

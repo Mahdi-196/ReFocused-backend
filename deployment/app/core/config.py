@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     # Cookie Settings
     COOKIE_SECURE: bool = Field(False, env="COOKIE_SECURE")  # Set to True in production with HTTPS
     COOKIE_HTTPONLY: bool = Field(True, env="COOKIE_HTTPONLY")
-    COOKIE_SAMESITE: str = Field("Lax", env="COOKIE_SAMESITE")  # Secure default, works perfectly with the same-domain proxy
+    COOKIE_SAMESITE: str = Field("none", env="COOKIE_SAMESITE")  # lax, strict, none
     COOKIE_DOMAIN: Optional[str] = Field(None, env="COOKIE_DOMAIN")
     COOKIE_PATH: str = Field("/", env="COOKIE_PATH")
     COOKIE_MAX_AGE: int = Field(86400 * 30, env="COOKIE_MAX_AGE")  # 30 days
@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     # Google OAuth
     GOOGLE_CLIENT_ID: str = Field(..., env="GOOGLE_CLIENT_ID")
     GOOGLE_CLIENT_SECRET: str = Field(..., env="GOOGLE_CLIENT_SECRET")
-
+    
     # Auth Flow Configuration
     AUTH_TOKEN_URL: str = Field("/api/v1/auth/login", env="AUTH_TOKEN_URL")
     AUTH_ALLOW_JSON: bool = Field(True, env="AUTH_ALLOW_JSON")
@@ -63,29 +63,24 @@ class Settings(BaseSettings):
     AUTH_DEFAULT_GRANT_TYPE: str = Field("password", env="AUTH_DEFAULT_GRANT_TYPE")
     AUTH_REQUIRE_GRANT_TYPE: bool = Field(False, env="AUTH_REQUIRE_GRANT_TYPE")
 
-    # Database - Optimized for Lambda and App Runner
+    # Database
     DATABASE_URL: str = Field(..., env="DATABASE_URL")
-    DATABASE_POOL_SIZE: int = Field(5, env="DATABASE_POOL_SIZE")  # Reduced for Lambda
-    DATABASE_MAX_OVERFLOW: int = Field(5, env="DATABASE_MAX_OVERFLOW")  # Reduced for Lambda
-    DATABASE_POOL_TIMEOUT: int = Field(5, env="DATABASE_POOL_TIMEOUT")  # Reduced from 10s to 5s for fail-fast behavior
-    DATABASE_POOL_RECYCLE: int = Field(300, env="DATABASE_POOL_RECYCLE")  # Recycle connections every 5 minutes
-
+    DATABASE_POOL_SIZE: int = Field(20, env="DATABASE_POOL_SIZE")
+    DATABASE_MAX_OVERFLOW: int = Field(10, env="DATABASE_MAX_OVERFLOW")
+    DATABASE_POOL_TIMEOUT: int = Field(5, env="DATABASE_POOL_TIMEOUT")  # Reduced from 30s to 5s for fail-fast behavior
+    DATABASE_POOL_RECYCLE: int = Field(1800, env="DATABASE_POOL_RECYCLE")
+    
     # Redis Configuration
     REDIS_URL: str = Field("redis://localhost:6379/1", env="REDIS_URL")
     REDIS_CACHE_DEBUG: bool = Field(False, env="REDIS_CACHE_DEBUG")
-
+    
     # Celery Configuration
     CELERY_BROKER_URL: str = Field("redis://localhost:6379/0", env="CELERY_BROKER_URL")
     CELERY_RESULT_BACKEND: str = Field("redis://localhost:6379/0", env="CELERY_RESULT_BACKEND")
 
     # CORS
     CORS_ALLOWED_ORIGINS: List[str] = Field(
-        default_factory=lambda: [
-            "http://localhost:3000",
-            "http://127.0.0.1:3000",
-            "https://www.refocused.app",
-            "https://refocused.app"
-        ],
+        default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"], 
         env="CORS_ALLOWED_ORIGINS"
     )
     CORS_ALLOW_CREDENTIALS: bool = Field(True, env="CORS_ALLOW_CREDENTIALS")
@@ -142,7 +137,7 @@ class Settings(BaseSettings):
     )
     SECURITY_LOG_LEVEL: str = Field("INFO", env="SECURITY_LOG_LEVEL")
     SECURITY_LOG_FORMAT: str = Field(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s", 
         env="SECURITY_LOG_FORMAT"
     )
 
@@ -174,14 +169,14 @@ class Settings(BaseSettings):
     )
     EMAIL_API_KEY: Optional[str] = Field(None, env="EMAIL_API_KEY")
     EMAIL_API_PREFIX: str = Field("", env="EMAIL_API_PREFIX")  # No stage for HTTP API
-
+    
     # External AI Service API (API Gateway → Lambda)
     AI_API_BASE_URL: str = Field(
         default="https://kzrybkpw5a.execute-api.us-east-1.amazonaws.com/api/ai",
         env="AI_API_BASE_URL",
     )
     AI_API_KEY: Optional[str] = Field(None, env="AI_API_KEY")
-
+    
     # External Feature Voting API (API Gateway → Lambda)
     VOTING_API_BASE_URL: str = Field(
         default="https://example.execute-api.us-east-1.amazonaws.com/api/feature-voting",
@@ -208,7 +203,7 @@ class Settings(BaseSettings):
 
     def is_production(self) -> bool:
         return self.APP_ENV.lower() == "production"
-
+    
     def get_current_date(self) -> date:
         """Get the current date (always real date now)"""
         return datetime.now().date()

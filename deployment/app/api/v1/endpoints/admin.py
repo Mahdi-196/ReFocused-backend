@@ -19,7 +19,7 @@ router = APIRouter()
 
 # Schemas
 class SuperuserCreateRequest(BaseModel):
-    email: str
+    email: str  # Changed from EmailStr to avoid DNS lookups in VPC
     password: str
     name: Optional[str] = None
 

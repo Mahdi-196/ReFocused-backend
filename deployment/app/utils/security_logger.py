@@ -12,9 +12,9 @@ logger.setLevel(logging.INFO)
 
 if settings.SECURITY_LOG_ENABLED and not logger.handlers:
     log_path = getattr(settings, "SECURITY_LOG_PATH", "security.log") or "security.log"
-    if os.environ.get("AWS_LAMBDA_FUNCTION_NAME") or os.environ.get("AWS_EXECUTION_ENV"):
-        if not os.path.isabs(log_path) or not log_path.startswith("/tmp"):
-            log_path = "/tmp/security.log"
+    running_on_lambda = bool(os.environ.get("AWS_LAMBDA_FUNCTION_NAME") or os.environ.get("AWS_EXECUTION_ENV"))
+    if running_on_lambda and (not os.path.isabs(log_path) or not log_path.startswith("/tmp")):
+        log_path = "/tmp/security.log"
     try:
         handler = logging.FileHandler(log_path)
     except Exception:

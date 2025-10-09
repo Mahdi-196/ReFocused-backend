@@ -14,111 +14,73 @@ logger = logging.getLogger("rate_limiter")
 rate_limit_store = defaultdict(list)
 
 class AdvancedRateLimiter:
-    """Advanced rate limiter with sliding window and Redis backend - FIXED VERSION."""
-
+    """Advanced rate limiter with sliding window and Redis backend."""
+    
     def __init__(self):
         self.redis = cache if cache.enabled else None
-
-    async def clear_limits(self, key_pattern: str):
-        """Clear rate limits for debugging purposes."""
-        try:
-            if self.redis:
-                # Clear from Redis
-                await self.redis._redis.delete(key_pattern)
-                logger.info(f"🧹 Cleared Redis rate limit for: {key_pattern}")
-        except Exception as e:
-            logger.error(f"Error clearing rate limits: {e}")
-
+        
     def get_rate_limit_key(self, request: Request, endpoint: str) -> str:
         """Generate rate limiting key considering user ID when available."""
         # Try to get user ID from request state
         if hasattr(request.state, 'user_id') and request.state.user_id:
             return f"rate_limit:{endpoint}:user:{request.state.user_id}"
-
+        
         # Fallback to IP address
         client_ip = get_client_ip(request)
         return f"rate_limit:{endpoint}:ip:{client_ip}"
-
+    
     async def check_rate_limit(
-        self,
-        key: str,
-        limit: int,
+        self, 
+        key: str, 
+        limit: int, 
         window: int
     ) -> Dict[str, any]:
         """
-        Sliding window rate limiting - FIXED VERSION.
+        Sliding window rate limiting.
+        
+        Args:
+            key: Rate limiting key
+            limit: Maximum requests allowed
+            window: Time window in seconds
+            
+        Returns:
+            Dict with rate limit status
         """
         now = time.time()
-
+        
         if not self.redis:
             # Use in-memory store as fallback
             return await self._check_in_memory(key, limit, window, now)
-
+        
         try:
-            # Use Redis for distributed rate limiting - FIXED
+            # Use Redis for distributed rate limiting
             return await self._check_redis(key, limit, window, now)
-
+            
         except Exception as e:
             logger.error(f"Redis rate limiting error: {str(e)}, falling back to memory")
             return await self._check_in_memory(key, limit, window, now)
-
+    
     async def _check_redis(self, key: str, limit: int, window: int, now: float) -> Dict[str, any]:
-        """FIXED Redis-based rate limiting - NO MORE KEYS() OPERATIONS."""
-
-        try:
-            # FIXED: Use a counter-based approach instead of scanning all keys
-            window_key = f"{key}:window:{int(now // window)}"
-
-            # Get current count for this window
-            current_count = await self.redis._redis.get(window_key) or 0
-            current_count = int(current_count)
-
-            if current_count >= limit:
-                return {
-                    "allowed": False,
-                    "current": current_count,
-                    "limit": limit,
-                    "reset_time": (int(now // window) + 1) * window,
-                    "retry_after": window
-                }
-
-            # Increment counter and set expiration
-            pipe = self.redis._redis.pipeline()
-            pipe.incr(window_key)
-            pipe.expire(window_key, window + 1)  # Small buffer for cleanup
-            await pipe.execute()
-
-            return {
-                "allowed": True,
-                "current": current_count + 1,
-                "limit": limit,
-                "reset_time": (int(now // window) + 1) * window,
-                "retry_after": 0
-            }
-
-        except Exception as e:
-            logger.error(f"Redis operation error: {e}, falling back to in-memory")
-            return await self._check_in_memory(key, limit, window, now)
-
-    async def _check_in_memory(self, key: str, limit: int, window: int, now: float) -> Dict[str, any]:
-        """In-memory rate limiting fallback."""
-        # Clean up expired entries
-        rate_limit_store[key] = [timestamp for timestamp in rate_limit_store[key] if now - timestamp < window]
-
-        current_count = len(rate_limit_store[key])
-
+        """Redis-based rate limiting."""
+        # Remove expired entries (older than window)
+        await self.redis.delete_expired(key, now - window)
+        
+        # Count current requests
+        current_count = await self.redis.count_keys(f"{key}:*")
+        
         if current_count >= limit:
             return {
                 "allowed": False,
                 "current": current_count,
                 "limit": limit,
-                "reset_time": rate_limit_store[key][0] + window if rate_limit_store[key] else now + window,
+                "reset_time": now + window,
                 "retry_after": window
             }
-
-        # Add current timestamp
-        rate_limit_store[key].append(now)
-
+        
+        # Add current request with timestamp
+        timestamp_key = f"{key}:{now}"
+        await self.redis.set(timestamp_key, "1", ttl=window + 60)  # Extra TTL for cleanup
+        
         return {
             "allowed": True,
             "current": current_count + 1,
@@ -126,62 +88,151 @@ class AdvancedRateLimiter:
             "reset_time": now + window,
             "retry_after": 0
         }
-
-
-# Create a global rate limiter instance
-rate_limiter = AdvancedRateLimiter()
-
-async def apply_auth_rate_limit(request: Request, endpoint: str):
-    """Apply rate limiting for authentication endpoints - COMPLETELY DISABLED FOR DEBUG."""
-
-    # COMPLETELY DISABLED: Skip all rate limiting logic
-    logger.info(f"🚫 RATE_LIMIT: COMPLETELY BYPASSED for debugging {endpoint}")
-    logger.info(f"🚫 RATE_LIMIT: Request IP: {request.client.host if request.client else 'unknown'}")
-    logger.info(f"🚫 RATE_LIMIT: Endpoint: {endpoint}")
-    logger.info(f"🚫 RATE_LIMIT: No limits applied - full bypass mode")
-
-    # Clear any existing rate limits for this endpoint
-    try:
-        client_ip = request.client.host if request.client else "unknown"
-        key_pattern = f"rate_limit:{endpoint}:ip:{client_ip}"
-        await rate_limiter.clear_limits(key_pattern)
-        logger.info(f"🧹 RATE_LIMIT: Cleared existing limits for {key_pattern}")
-    except Exception as e:
-        logger.info(f"🧹 RATE_LIMIT: Could not clear limits: {e}")
-
-    return  # Always return immediately - no rate limiting
-
-    # Skip rate limiting if disabled
-    if not settings.RATE_LIMIT_ENABLED:
-        return
-
-    # Define rate limits for different auth endpoints
-    limits = {
-        "login": (10, 300),      # 10 attempts per 5 minutes
-        "register": (5, 300),    # 5 attempts per 5 minutes
-        "refresh": (20, 60),     # 20 attempts per minute
-        "google": (10, 300),     # 10 attempts per 5 minutes
-    }
-
-    limit, window = limits.get(endpoint, (10, 300))  # Default: 10 per 5 min
-
-    key = rate_limiter.get_rate_limit_key(request, endpoint)
-
-    try:
-        result = await rate_limiter.check_rate_limit(key, limit, window)
-
+    
+    async def _check_in_memory(self, key: str, limit: int, window: int, now: float) -> Dict[str, any]:
+        """In-memory fallback rate limiting."""
+        # Clean old requests
+        rate_limit_store[key] = [
+            req_time for req_time in rate_limit_store[key]
+            if now - req_time < window
+        ]
+        
+        current_count = len(rate_limit_store[key])
+        
+        if current_count >= limit:
+            return {
+                "allowed": False,
+                "current": current_count,
+                "limit": limit,
+                "reset_time": now + window,
+                "retry_after": window
+            }
+        
+        # Add current request
+        rate_limit_store[key].append(now)
+        
+        return {
+            "allowed": True,
+            "current": current_count + 1,
+            "limit": limit,
+            "reset_time": now + window,
+            "retry_after": 0
+        }
+    
+    async def apply_rate_limit(
+        self,
+        request: Request,
+        endpoint: str,
+        limit: int,
+        window: int
+    ) -> None:
+        """Apply rate limiting and raise HTTPException if exceeded."""
+        if not settings.RATE_LIMIT_ENABLED:
+            return
+            
+        key = self.get_rate_limit_key(request, endpoint)
+        result = await self.check_rate_limit(key, limit, window)
+        
         if not result["allowed"]:
-            logger.warning(f"Rate limit exceeded for {endpoint}: {key}")
+            # Log rate limit violation
+            client_ip = get_client_ip(request)
+            logger.warning(f"Rate limit exceeded for {client_ip} on {endpoint}: {result['current']}/{result['limit']}")
+            
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"Too many {endpoint} attempts. Try again in {result['retry_after']} seconds."
+                detail={
+                    "error": "Rate limit exceeded",
+                    "limit": result["limit"],
+                    "window": window,
+                    "current": result["current"],
+                    "retry_after": result["retry_after"]
+                },
+                headers={
+                    "Retry-After": str(result["retry_after"]),
+                    "X-RateLimit-Limit": str(result["limit"]),
+                    "X-RateLimit-Remaining": str(max(0, result["limit"] - result["current"])),
+                    "X-RateLimit-Reset": str(int(result["reset_time"]))
+                }
             )
 
-        logger.info(f"Rate limit OK for {endpoint}: {result['current']}/{result['limit']}")
+# Global rate limiter instance
+rate_limiter = AdvancedRateLimiter()
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Rate limit check failed for {endpoint}: {e}")
-        # Don't block on rate limit failures in production
-        pass
+# Rate limiting configurations for different endpoint types
+class RateLimitConfig:
+    """Rate limiting configuration for different endpoint types."""
+    
+    # Authentication endpoints (stricter limits)
+    LOGIN = {"limit": 5, "window": 900}  # 5 attempts per 15 minutes
+    REGISTER = {"limit": 3, "window": 3600}  # 3 registrations per hour
+    PASSWORD_RESET = {"limit": 3, "window": 3600}  # 3 reset attempts per hour
+    
+    # API endpoints (moderate limits)
+    FEEDBACK = {"limit": 3, "window": 300}  # 3 feedback submissions per 5 minutes
+    JOURNAL_WRITE = {"limit": 100, "window": 3600}  # 100 entries per hour
+    
+    # General API (generous limits)
+    GENERAL_READ = {"limit": 1000, "window": 3600}  # 1000 reads per hour
+    GENERAL_WRITE = {"limit": 200, "window": 3600}  # 200 writes per hour
+
+async def apply_auth_rate_limit(request: Request, endpoint_type: str = "login"):
+    """Apply rate limiting for authentication endpoints."""
+    config_map = {
+        "login": RateLimitConfig.LOGIN,
+        "register": RateLimitConfig.REGISTER,
+        "password_reset": RateLimitConfig.PASSWORD_RESET
+    }
+
+    config = config_map.get(endpoint_type, RateLimitConfig.LOGIN)
+    await rate_limiter.apply_rate_limit(
+        request,
+        f"auth_{endpoint_type}",
+        config["limit"],
+        config["window"]
+    )
+
+async def apply_api_rate_limit(request: Request, endpoint_type: str = "general_write"):
+    """Apply rate limiting for API endpoints."""
+    config_map = {
+        "feedback": RateLimitConfig.FEEDBACK,
+        "journal_write": RateLimitConfig.JOURNAL_WRITE,
+        "general_read": RateLimitConfig.GENERAL_READ,
+        "general_write": RateLimitConfig.GENERAL_WRITE
+    }
+    
+    config = config_map.get(endpoint_type, RateLimitConfig.GENERAL_WRITE)
+    await rate_limiter.apply_rate_limit(
+        request,
+        f"api_{endpoint_type}",
+        config["limit"],
+        config["window"]
+    )
+
+# Legacy decorator for backward compatibility
+def rate_limit():
+    """Rate limiting decorator."""
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            if not settings.RATE_LIMIT_ENABLED:
+                return await func(*args, **kwargs)
+            
+            # Get request object
+            request = None
+            for arg in args:
+                if isinstance(arg, Request):
+                    request = arg
+                    break
+            
+            if not request:
+                for arg in kwargs.values():
+                    if isinstance(arg, Request):
+                        request = arg
+                        break
+            
+            if request:
+                await apply_api_rate_limit(request, "general_write")
+            
+            return await func(*args, **kwargs)
+        return wrapper
+    return decorator 

@@ -9,23 +9,10 @@ from fastapi.middleware.gzip import GZipMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.core.config import settings
-from app.monitoring.logging_config import setup_structured_logging, get_logger
-
-# Initialize structured logging early
-setup_structured_logging()
-logger_early = get_logger("app.main.imports")
-logger_early.info("🔧 DEBUG: Starting imports...")
-
-try:
-    from app.api.v1.api import api_router, monitoring_router
-    logger_early.info("✅ DEBUG: Successfully imported api_router and monitoring_router")
-    logger_early.info(f"🔍 DEBUG: api_router has {len(api_router.routes)} routes")
-except Exception as e:
-    logger_early.error(f"❌ DEBUG: Failed to import API routers: {e}")
-    raise
-
+from app.api.v1.api import api_router, monitoring_router
 from app.core.production_middleware import ProductionMiddleware
 from app.core.auth_middleware import SessionAuthenticationMiddleware
+from app.monitoring.logging_config import setup_structured_logging, get_logger
 from app.monitoring.metrics import metrics
 import os
 import asyncio
@@ -43,6 +30,8 @@ try:
 except Exception:
     OTEL_AVAILABLE = False
 
+# Initialize structured logging
+setup_structured_logging()
 logger = get_logger("app.main")
 
 # Initialize FastAPI app
@@ -55,10 +44,46 @@ app = FastAPI(
     openapi_url="/openapi.json" if not settings.is_production() else None
 )
 
+# --- START OF DEBUG CODE FOR CORS ---
+# Get the comma-separated string of origins from the environment variable
+allowed_origins_str = os.getenv("CORS_ALLOWED_ORIGINS", "")
+# 1. Print the raw value from the environment variable
+print(f"--- DEBUG PRODUCTION: CORS_ALLOWED_ORIGINS from env: '{allowed_origins_str}'")
+logger.info(f"--- DEBUG PRODUCTION: CORS_ALLOWED_ORIGINS from env: '{allowed_origins_str}'")
+
+# Parse the JSON list from environment variable
+cors_origins = []
+if allowed_origins_str:
+    try:
+        import json
+        cors_origins = json.loads(allowed_origins_str)
+        print(f"--- DEBUG PRODUCTION: Parsed CORS origins from JSON: {cors_origins}")
+        logger.info(f"--- DEBUG PRODUCTION: Parsed CORS origins from JSON: {cors_origins}")
+    except json.JSONDecodeError:
+        # Fallback to comma-separated parsing
+        cors_origins = [origin.strip() for origin in allowed_origins_str.split(',') if origin.strip()]
+        print(f"--- DEBUG PRODUCTION: Parsed CORS origins from CSV: {cors_origins}")
+        logger.info(f"--- DEBUG PRODUCTION: Parsed CORS origins from CSV: {cors_origins}")
+
+# Always include production URLs + development + Google + environment configured origins
+final_cors_origins = [
+    "https://www.refocused.app",
+    "https://refocused.app",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://accounts.google.com"
+] + cors_origins + settings.CORS_ALLOWED_ORIGINS
+
+# Remove duplicates while preserving order
+final_cors_origins = list(dict.fromkeys(final_cors_origins))
+# 2. Print the final list that will be used
+print(f"--- DEBUG PRODUCTION: Final CORS origins list: {final_cors_origins}")
+logger.info(f"--- DEBUG PRODUCTION: Final CORS origins list: {final_cors_origins}")
+
 # CORS Configuration - must be first middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ALLOWED_ORIGINS,
+    allow_origins=final_cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=[
@@ -74,6 +99,11 @@ app.add_middleware(
     expose_headers=["X-Correlation-ID", "X-Response-Time", "Set-Cookie"]
 )
 
+# 3. Print a confirmation that the middleware was added
+print("--- DEBUG PRODUCTION: CORSMiddleware has been added to the app for App Runner.")
+logger.info("--- DEBUG PRODUCTION: CORSMiddleware has been added to the app for App Runner.")
+# --- END OF DEBUG CODE ---
+
 # Session middleware for authentication
 app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
 
@@ -83,21 +113,18 @@ app.add_middleware(SessionAuthenticationMiddleware)
 # Consolidated production middleware (replaces multiple security/monitoring middleware)
 app.add_middleware(ProductionMiddleware)
 
-# Trusted hosts (production only)
-if settings.is_production():
-    app.add_middleware(
-        TrustedHostMiddleware, 
-        allowed_hosts=getattr(settings, 'TRUSTED_HOSTS', ["*"])
-    )
+# Trusted hosts (production only) - DISABLED FOR DEBUGGING
+# if settings.is_production():
+#     app.add_middleware(
+#         TrustedHostMiddleware,
+#         allowed_hosts=getattr(settings, 'TRUSTED_HOSTS', ["*"])
+#     )
 
 # Compression for responses
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Include API routers
 app.include_router(api_router, prefix="/api/v1")
-
-# Backward compatibility: Include API router again without v1 prefix for legacy frontend
-app.include_router(api_router, prefix="/api")
 
 # Include monitoring routes at root level (no prefix)
 app.include_router(monitoring_router)
@@ -137,42 +164,22 @@ def _setup_sentry_and_tracing():
 async def _run_db_migrations_if_enabled():
     if settings.RUN_DB_MIGRATIONS_ON_STARTUP:
         try:
-            import subprocess
-            logger.info("🗂️ Running database migrations...")
-            subprocess.run(
-                [
-                    "alembic",
-                    "-c",
-                    settings.ALEMBIC_INI_PATH,
-                    "upgrade",
-                    "head",
-                ],
-                check=True,
-            )
-            logger.info("✅ Database migrations applied")
+            logger.info("🗂️ Creating database tables...")
+            from app.db.models import Base
+            from app.db.database import engine
+            # Create all tables directly from models
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            logger.info("✅ Database tables created")
         except Exception as e:
-            logger.error(f"❌ Failed to run migrations: {e}")
+            logger.error(f"❌ Failed to create tables: {e}")
             raise
 
 @app.on_event("startup")
 async def startup_event():
     """Application startup event."""
     logger.info("🚀 ReFocused API starting up...")
-
-    # Debug: Log all registered routes
-    logger.info("🔍 DEBUG: Registered routes:")
-    for route in app.routes:
-        if hasattr(route, 'path') and hasattr(route, 'methods'):
-            logger.info(f"  {route.methods} {route.path}")
-        elif hasattr(route, 'path_regex'):
-            logger.info(f"  MOUNT {route.path_regex.pattern} -> {type(route)}")
-
-    # Debug: Check API router routes
-    logger.info("🔍 DEBUG: API Router (/api/v1) routes:")
-    for route in api_router.routes:
-        if hasattr(route, 'path') and hasattr(route, 'methods'):
-            logger.info(f"  {route.methods} /api/v1{route.path}")
-
+    
     # Initialize monitoring
     metrics.set_health_status(True)
 
@@ -191,11 +198,8 @@ async def startup_event():
             logger.info("✅ Database connection successful")
         except Exception as e:
             logger.error(f"❌ Database connection failed: {str(e)}")
-            logger.info("🔧 DEBUG: Continuing startup without database for debugging...")
             metrics.set_health_status(False)
-            # Don't raise - continue for debugging
-    else:
-        logger.info("🔧 DEBUG: DB startup disabled, skipping database connection")
+            raise
     
     # Log configuration
     logger.info(f"🏃 Running in {settings.APP_ENV} mode")
@@ -226,6 +230,27 @@ async def root():
         }
     }
 
+@app.get("/debug/version")
+async def version_debug():
+    """Debug endpoint to verify deployment folder and code version."""
+    import datetime
+    return {
+        "message": "ReFocused API - MIDDLEWARE CACHED BODY",
+        "version": "1.0.10-oct6-2025-mw-cache",
+        "deployment_source": "/app folder from deployment/ directory",
+        "changes_applied": [
+            "Fixed request.json() error - now using cached body from middleware",
+            "Middleware reads body once, register uses cached version",
+            "No Pydantic on register - manual JSON parsing from cached body",
+            "EmailStr fully removed - str with regex validation (no DNS)"
+        ],
+        "timestamp": datetime.datetime.utcnow().isoformat(),
+        "docker_build_date": "2025-10-06T22:15:00",
+        "environment": settings.APP_ENV,
+        "register_endpoint": "/api/v1/auth/register",
+        "fix_for": "JSON parse error when middleware already consumed request body"
+    }
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
@@ -234,9 +259,4 @@ if __name__ == "__main__":
         port=8000,
         reload=not settings.is_production(),
         log_level="info" if settings.is_production() else "debug"
-    ) # Build cache breaker Fri Sep 26 12:23:41 MST 2025
-# Build cache breaker Fri Sep 26 13:49:29 MST 2025
-# Debug endpoints build: Fri Sep 26 14:17:27 MST 2025
-# Diagnostic register build: Fri Sep 26 14:21:12 MST 2025
-# Fresh deployment build: Fri Sep 26 14:27:09 MST 2025
-# LimitExceededException fix build: Fri Sep 26 17:27:25 MST 2025
+    ) 

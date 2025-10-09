@@ -8,16 +8,23 @@ from app.db.database import get_db
 from app.db.models import User, Goal2Week, GoalLongTerm, Habit, MoodEntry, StudySet, Mantra, JournalCollection
 from app.core.auth import get_current_active_user
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, validator
 
 router = APIRouter(prefix="/user", tags=["User"])
 
 class UserResponse(BaseModel):
     id: int
-    email: EmailStr
+    email: str  # Changed from EmailStr to avoid DNS lookups in VPC
     name: str = None
     profile_picture: str = None
-    
+
+    @validator('email')
+    def validate_email(cls, v):
+        import re
+        if v and not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', v):
+            raise ValueError('Invalid email format')
+        return v.lower().strip() if v else v
+
     class Config:
         from_attributes = True
 

@@ -34,7 +34,7 @@ api_router.include_router(time.router, prefix="/time", tags=["time"])
 
 
 class EmailRequest(BaseModel):
-    email: str
+    email: str  # Changed from EmailStr to avoid DNS lookups in VPC
 
     @validator('email')
     def validate_email(cls, v):

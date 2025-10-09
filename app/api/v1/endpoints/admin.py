@@ -6,7 +6,7 @@ from typing import List, Optional, Any
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, validator
 
 from app.db.database import get_db
 from app.db.models import User
@@ -19,9 +19,16 @@ router = APIRouter()
 
 # Schemas
 class SuperuserCreateRequest(BaseModel):
-    email: EmailStr
+    email: str  # Changed from EmailStr to avoid DNS lookups in VPC
     password: str
     name: Optional[str] = None
+
+    @validator('email')
+    def validate_email(cls, v):
+        import re
+        if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', v):
+            raise ValueError('Invalid email format')
+        return v.lower().strip()
 
 
 class SuperuserResponse(BaseModel):

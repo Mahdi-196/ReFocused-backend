@@ -10,9 +10,11 @@ from passlib.context import CryptContext
 from app.core.config import settings
 
 def _resolve_security_log_path() -> str:
+    """Return a writable log path, using /tmp on AWS Lambda."""
     configured_path = getattr(settings, "SECURITY_LOG_PATH", "security.log")
     running_on_lambda = bool(os.environ.get("AWS_LAMBDA_FUNCTION_NAME") or os.environ.get("AWS_EXECUTION_ENV"))
     if running_on_lambda:
+        # Lambda filesystem is read-only except /tmp
         if not configured_path or not configured_path.startswith("/tmp"):
             return "/tmp/security.log"
     return configured_path or "security.log"
@@ -24,6 +26,7 @@ if not security_logger.handlers:
     try:
         log_handler = logging.FileHandler(_resolve_security_log_path())
     except Exception:
+        # Fallback to stdout if file handler cannot be created
         log_handler = logging.StreamHandler()
     log_formatter = logging.Formatter(
         '%(asctime)s - %(levelname)s - %(message)s',
@@ -36,10 +39,15 @@ if not security_logger.handlers:
 # Using bcrypt for password hashing with configured rounds for performance
 # bcrypt rounds=12 provides ~400ms hashing time (vs rounds=14 at ~1600ms)
 # This is still OWASP-compliant and secure while preventing registration timeouts
+# Use bcrypt directly to avoid passlib's buggy wrap detection in Alpine
+import bcrypt as _bcrypt_module
+
 pwd_context = CryptContext(
     schemes=["bcrypt"],
     deprecated="auto",
-    bcrypt__rounds=settings.BCRYPT_ROUNDS
+    bcrypt__rounds=settings.BCRYPT_ROUNDS,
+    # Skip the buggy wrap detection - not needed in modern bcrypt
+    bcrypt__ident="2b"  # Force 2b variant which doesn't have wrap bug
 )
 
 def log_security_event(event_type: str, details: Dict[str, Any], 
@@ -64,12 +72,20 @@ def log_security_event(event_type: str, details: Dict[str, Any],
     log_method(json.dumps(log_data))
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against its hash."""
-    return pwd_context.verify(plain_password, hashed_password)
+    """Verify a password against its hash using bcrypt directly."""
+    password_bytes = plain_password.encode('utf-8')[:72]
+    hashed_bytes = hashed_password.encode('utf-8')
+    return _bcrypt_module.checkpw(password_bytes, hashed_bytes)
 
 def get_password_hash(password: str) -> str:
-    """Generate password hash."""
-    return pwd_context.hash(password)
+    """Generate password hash using bcrypt directly (bypasses passlib's buggy wrap detection)."""
+    # Bcrypt has a 72-byte limit, truncate password for safety
+    password_bytes = password.encode('utf-8')[:72]
+
+    # Use bcrypt directly to avoid passlib's Alpine/ARM compatibility issues
+    rounds = getattr(settings, 'BCRYPT_ROUNDS', 12)
+    hashed = _bcrypt_module.hashpw(password_bytes, _bcrypt_module.gensalt(rounds=rounds))
+    return hashed.decode('utf-8')
 
 def _get_signing_params() -> Dict[str, Any]:
     """Return key and algorithm for JWT signing based on settings."""
