@@ -178,9 +178,12 @@ class ProductionMiddleware(BaseHTTPMiddleware):
             content_type = request.headers.get("content-type", "")
             if not any(t in content_type for t in ["application/json", "application/x-www-form-urlencoded", "text/"]):
                 return False
-            
-            # Read body safely
+
+            # Read body safely and cache it in request.state for later reuse
             body = await request.body()
+            # Cache the body so it can be read again by the endpoint
+            request.state.cached_body = body
+
             if not body:
                 return False
             

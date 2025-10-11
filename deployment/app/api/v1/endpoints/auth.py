@@ -4,7 +4,7 @@ from typing import Any, Optional, Dict
 from fastapi import APIRouter, Request, Depends, HTTPException, status, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from jose import jwt, JWTError
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, validator
 from sqlalchemy import select
 
 from app.core.security import (
@@ -41,16 +41,14 @@ class LoginRequest(BaseModel):
     grant_type: str = settings.AUTH_DEFAULT_GRANT_TYPE
     scope: Optional[str] = None
 
-    @field_validator('email')
-    @classmethod
+    @validator('email')
     def validate_email(cls, v):
         import re
         if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', v):
             raise ValueError('Invalid email format')
         return v.lower().strip()
 
-    @field_validator('password')
-    @classmethod
+    @validator('password')
     def validate_password(cls, v):
         if not v or len(v.strip()) == 0:
             raise ValueError('Password is required')
@@ -64,16 +62,14 @@ class EnhancedLoginRequest(BaseModel):
     scope: Optional[str] = None
     remember_me: bool = False
 
-    @field_validator('email')
-    @classmethod
+    @validator('email')
     def validate_email(cls, v):
         import re
         if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', v):
             raise ValueError('Invalid email format')
         return v.lower().strip()
 
-    @field_validator('password')
-    @classmethod
+    @validator('password')
     def validate_password(cls, v):
         if not v or len(v.strip()) == 0:
             raise ValueError('Password is required')
@@ -94,8 +90,7 @@ class RegisterSchema(BaseModel):
     password: str = Field(..., min_length=8, max_length=200)
     name: str = Field(..., min_length=1, max_length=100)
 
-    @field_validator('email')
-    @classmethod
+    @validator('email')
     def validate_email(cls, v):
         import re
         # Simple regex validation without DNS lookup
@@ -103,15 +98,13 @@ class RegisterSchema(BaseModel):
             raise ValueError('Invalid email format')
         return v.lower().strip()
 
-    @field_validator('password')
-    @classmethod
+    @validator('password')
     def validate_password(cls, v):
         if len(v) < 8:
             raise ValueError('Password must be at least 8 characters long')
         return v
 
-    @field_validator('name')
-    @classmethod
+    @validator('name')
     def validate_name(cls, v):
         if not v or len(v.strip()) == 0:
             raise ValueError('Name is required')
@@ -590,81 +583,68 @@ async def enhanced_refresh_token_alias(
     """Alias for clients calling /auth/refresh-token; delegates to refresh."""
     return await enhanced_refresh_token(request, response, db)
 
-# Removed non-primary register endpoints to ensure only the main /register is exposed
+@router.post("/register-debug")
+async def register_debug(request: Request) -> Any:
+    """MINIMAL test endpoint - no schema, no dependencies, just logs"""
+    logger.info(f"🔥 REGISTER_DEBUG: Function started!")
+    logger.info(f"🔥 REGISTER_DEBUG: Request method: {request.method}")
+    logger.info(f"🔥 REGISTER_DEBUG: Request URL: {request.url}")
+    logger.info(f"🔥 REGISTER_DEBUG: Request headers: {dict(request.headers)}")
+    logger.info(f"🔥 REGISTER_DEBUG: About to return response...")
+    return {"message": "Debug endpoint works - no schema validation", "success": True}
+
+@router.post("/register-fast")
+async def register_fast(data: FastRegisterSchema, request: Request) -> Any:
+    """Fast registration test - no EmailStr validation, no rate limiting"""
+    logger.info(f"⚡ REGISTER_FAST: Function started for {data.email}")
+    logger.info(f"⚡ REGISTER_FAST: Email: {data.email}, Name: {data.name}")
+    logger.info(f"⚡ REGISTER_FAST: About to return response...")
+    return {"message": "Fast registration works", "email": data.email, "success": True}
+
+@router.post("/register-test")
+async def register_test(data: RegisterSchema, response: Response, request: Request) -> Any:
+    """Test registration endpoint without database dependency"""
+    logger.info(f"🧪 REGISTER_TEST: Function started for {data.email}")
+    logger.info(f"🧪 REGISTER_TEST: About to call rate limiter...")
+    await apply_auth_rate_limit(request, "register")
+    logger.info(f"🧪 REGISTER_TEST: Rate limiter completed")
+    return {"message": "Test successful", "email": data.email}
+
+# Removed duplicate basic /login route - using enhanced_login() above which has:
+# - Cookie-based authentication with remember me
+# - Comprehensive timing and performance logging
+# - Brute-force protection with account lockout
+# - Better error handling and security event tracking
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register(
+    data: RegisterSchema,
     request: Request,
-    response: Response,
     db: AsyncSession = Depends(get_db)
 ) -> Any:
-    """Register new user - NO PYDANTIC - manual JSON parsing"""
+    """Register new user with email and password - Enhanced with rate limiting and comprehensive logging"""
     import time
     import asyncio
-    import re
 
     register_start_time = time.time()
+    user_email = data.email[:5] + "...@" + (data.email.split('@')[1] if '@' in data.email else 'unknown')
     client_ip = get_client_ip(request)
 
-    logger.info(f"🔐 REGISTER START (NO PYDANTIC): {register_start_time:.3f} from {client_ip}")
-
-    # Parse JSON manually - NO PYDANTIC
-    # Get body from request state where middleware cached it
     try:
-        json_start = time.time()
-        logger.info(f"📖 CHECKING REQUEST STATE: {time.time():.3f}")
+        # Apply rate limiting for registration (3 attempts per hour)
+        logger.info(f"🔐 REGISTER START: {user_email} from {client_ip}")
+        rate_limit_start = time.time()
+        await apply_auth_rate_limit(request, "register")
+        rate_limit_time = time.time() - rate_limit_start
 
-        # Middleware caches body in request.state.cached_body
-        if hasattr(request.state, 'cached_body'):
-            cached_body = request.state.cached_body
-            logger.info(f"📖 GOT CACHED BODY FROM MIDDLEWARE: {len(cached_body)} bytes")
-        else:
-            logger.error(f"❌ NO CACHED BODY FROM MIDDLEWARE - this shouldn't happen!")
-            raise HTTPException(status_code=500, detail="Internal server error - body not cached")
-
-        # Parse JSON from cached body
-        import json as json_lib
-        body = json_lib.loads(cached_body.decode('utf-8'))
-        logger.info(f"📖 JSON PARSED: took {time.time() - json_start:.3f}s")
-
-        email = body.get("email", "").lower().strip()
-        password = body.get("password", "")
-        name = body.get("name", "").strip()
-
-        # Manual validation
-        if not email or not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
-            logger.warning(f"❌ VALIDATION FAILED: Invalid email format - got '{email}'")
-            raise HTTPException(status_code=400, detail="Invalid email format")
-        if not password or len(password) < 8:
-            logger.warning(f"❌ VALIDATION FAILED: Password too short - got {len(password)} chars")
-            raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
-        if not name:
-            logger.warning(f"❌ VALIDATION FAILED: Name is empty")
-            raise HTTPException(status_code=400, detail="Name is required")
-
-        user_email = email[:5] + "...@" + (email.split('@')[1] if '@' in email else 'unknown')
-        logger.info(f"✅ VALIDATION PASSED: {user_email}")
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ JSON PARSE ERROR: {str(e)}")
-        raise HTTPException(status_code=400, detail="Invalid request body")
-
-    try:
-        # TEMPORARILY DISABLED - rate limiter for testing
-        # rate_limit_start = time.time()
-        # await apply_auth_rate_limit(request, "register")
-        # rate_limit_time = time.time() - rate_limit_start
-        # if rate_limit_time > 2.0:
-        #     logger.warning(f"🐌 REGISTER SLOW RATE LIMIT: {rate_limit_time:.2f}s for {user_email}")
-        logger.info(f"⚠️ RATE LIMITING DISABLED FOR TESTING")
+        if rate_limit_time > 2.0:
+            logger.warning(f"🐌 REGISTER SLOW RATE LIMIT: {rate_limit_time:.2f}s for {user_email}")
 
         # Check if user already exists with timeout
         db_lookup_start = time.time()
         try:
             result = await asyncio.wait_for(
-                db.execute(select(User).where(User.email == email)),
+                db.execute(select(User).where(User.email == data.email)),
                 timeout=5.0
             )
             existing_user = result.scalar_one_or_none()
@@ -688,7 +668,7 @@ async def register(
 
         # Hash password with timing
         hash_start = time.time()
-        hashed_password = get_password_hash(password)
+        hashed_password = get_password_hash(data.password)
         hash_time = time.time() - hash_start
 
         if hash_time > 3.0:
@@ -698,8 +678,8 @@ async def register(
         user_create_start = time.time()
         try:
             user = User(
-                email=email,
-                name=name,
+                email=data.email,
+                name=data.name,
                 hashed_password=hashed_password,
                 auth_provider="email",
                 is_active=True
@@ -719,16 +699,14 @@ async def register(
                 detail="Service temporarily unavailable. Please try again."
             )
 
-        # Create session tokens with timing (same as login endpoint)
+        # Create tokens with timing
         token_start = time.time()
-        tokens = enhanced_auth_service.create_session_tokens(user, remember_me=False)
+        access_token = create_access_token(data={"sub": user.email, "user_id": user.id})
+        refresh_token = create_refresh_token(data={"sub": user.email, "user_id": user.id})
         token_time = time.time() - token_start
 
         if token_time > 2.0:
             logger.warning(f"🐌 REGISTER SLOW TOKEN CREATION: {token_time:.2f}s for {user_email}")
-
-        # Set auth cookies (CRITICAL: This was missing!)
-        enhanced_auth_service.set_auth_cookies(response, tokens)
 
         # Log successful registration
         total_time = time.time() - register_start_time
@@ -751,16 +729,10 @@ async def register(
 
         return {
             "message": "Registration successful",
-            "access_token": tokens["access_token"],
-            "refresh_token": tokens["refresh_token"],
+            "access_token": access_token,
+            "refresh_token": refresh_token,
             "token_type": "bearer",
-            "expires_in": tokens["expires_in"],
-            "user": {
-                "id": user.id,
-                "email": user.email,
-                "name": user.name,
-                "profile_picture": user.profile_picture
-            },
+            "expires_in": 1800,
             "success": True
         }
 
@@ -783,7 +755,7 @@ async def register(
 
 @router.post("/google", response_model=GoogleAuthResponse)
 async def google_auth(
-    request: GoogleAuthRequest,
+    raw_request: Request,
     response: Response,
     db: AsyncSession = Depends(get_db)
 ) -> Any:
@@ -796,22 +768,62 @@ async def google_auth(
     3. Returns a JWT access token for API access
     """
     import logging
+    import time
+    import json
     logger = logging.getLogger(__name__)
 
+    google_auth_start_time = time.time()
+
     try:
-        logger.info(f"Google OAuth request received with token length: {len(request.id_token)}")
+        # Parse JSON body - use cached body from middleware if available
+        try:
+            # Check if middleware already cached the body
+            if hasattr(raw_request.state, 'cached_body'):
+                body = raw_request.state.cached_body
+                logger.info("🔐 GOOGLE AUTH: Using cached body from middleware")
+            else:
+                body = await raw_request.body()
+                logger.info("🔐 GOOGLE AUTH: Reading body directly (no cache)")
+
+            body_str = body.decode('utf-8')
+            logger.info(f"🔐 GOOGLE AUTH RAW BODY: {body_str[:200]}")
+
+            # Parse the already-read body
+            request_data = json.loads(body_str)
+            logger.info(f"🔐 GOOGLE AUTH PARSED JSON: {list(request_data.keys())}")
+            request = GoogleAuthRequest(**request_data)
+        except json.JSONDecodeError as e:
+            logger.error(f"❌ GOOGLE AUTH JSON DECODE ERROR: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid JSON format: {str(e)}"
+            )
+        except Exception as e:
+            logger.error(f"❌ GOOGLE AUTH VALIDATION ERROR: {str(e)}")
+            logger.error(f"❌ GOOGLE AUTH REQUEST DATA: {request_data if 'request_data' in locals() else 'Could not parse body'}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid request format: {str(e)}"
+            )
+
+        logger.info(f"🔐 GOOGLE AUTH START: Token length: {len(request.id_token)}")
 
         google_service = GoogleOAuthService()
 
         # Verify Google token and extract user info with enhanced security validation
-        logger.info("Attempting to verify Google token...")
+        verify_start = time.time()
+        logger.info("🔍 GOOGLE AUTH: Attempting to verify Google token...")
         user_info = await google_service.verify_token(request.id_token)
+        verify_time = time.time() - verify_start
 
-        logger.info(f"Google token verified successfully for email: {user_info.get('email')}")
+        if verify_time > 5.0:
+            logger.warning(f"🐌 GOOGLE AUTH SLOW VERIFICATION: {verify_time:.2f}s")
+
+        logger.info(f"✅ GOOGLE AUTH: Token verified successfully for email: {user_info.get('email')}")
 
         # Check if email is verified
         if not user_info.get('email_verified', False):
-            logger.warning(f"Email not verified for user: {user_info['email']}")
+            logger.warning(f"❌ GOOGLE AUTH: Email not verified for user: {user_info['email']}")
             log_security_event(
                 event_type="google_auth_failed",
                 details={"reason": "email_not_verified", "email": user_info['email']},
@@ -822,18 +834,23 @@ async def google_auth(
                 detail="Google account email is not verified"
             )
 
-        logger.info("Starting database operations...")
+        db_start = time.time()
+        logger.info("🗄️ GOOGLE AUTH: Starting database operations...")
 
         # Check if user exists by Google ID first
-        logger.info(f"Checking for existing user with Google ID: {user_info['google_id']}")
+        logger.info(f"🔍 GOOGLE AUTH: Checking for existing user with Google ID: {user_info['google_id'][:10]}...")
         result = await db.execute(
             select(User).where(User.google_id == user_info['google_id'])
         )
         user = result.scalar_one_or_none()
 
+        db_lookup_time = time.time() - db_start
+        if db_lookup_time > 2.0:
+            logger.warning(f"🐌 GOOGLE AUTH SLOW DB LOOKUP: {db_lookup_time:.2f}s")
+
         # If not found by Google ID, check by email
         if not user:
-            logger.info(f"No user found with Google ID, checking by email: {user_info['email']}")
+            logger.info(f"🔍 GOOGLE AUTH: No user found with Google ID, checking by email: {user_info['email']}")
             result = await db.execute(
                 select(User).where(User.email == user_info['email'])
             )
@@ -841,14 +858,20 @@ async def google_auth(
 
             # If found by email, update with Google ID (link accounts)
             if user:
-                logger.info(f"Found existing user by email, linking Google account: {user.email}")
+                logger.info(f"🔗 GOOGLE AUTH: Found existing user by email, linking Google account: {user.email}")
                 user.google_id = user_info['google_id']
                 user.auth_provider = "google"
                 user.profile_picture = user_info.get('picture')
                 if not user.name and user_info.get('name'):
                     user.name = user_info['name']
+
+                commit_start = time.time()
                 await db.commit()
                 await db.refresh(user)
+                commit_time = time.time() - commit_start
+
+                if commit_time > 2.0:
+                    logger.warning(f"🐌 GOOGLE AUTH SLOW DB COMMIT (LINK): {commit_time:.2f}s")
 
                 log_security_event(
                     event_type="account_linked",
@@ -859,19 +882,25 @@ async def google_auth(
 
         # If user doesn't exist, create new one
         if not user:
-            logger.info("Creating new user from Google OAuth data")
+            logger.info("➕ GOOGLE AUTH: Creating new user from Google OAuth data")
 
             # Get existing emails to ensure uniqueness
+            email_check_start = time.time()
             email_check = await db.execute(select(User).where(User.email == user_info['email']))
             if email_check.scalar_one_or_none():
-                logger.warning(f"Email {user_info['email']} already exists but with different Google ID")
+                logger.warning(f"❌ GOOGLE AUTH: Email {user_info['email']} already exists but with different Google ID")
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Email address is already registered with a different account"
                 )
 
+            email_check_time = time.time() - email_check_start
+            if email_check_time > 2.0:
+                logger.warning(f"🐌 GOOGLE AUTH SLOW EMAIL CHECK: {email_check_time:.2f}s")
+
             # DeletedEmail cooldown disabled per request
 
+            user_create_start = time.time()
             user = User(
                 email=user_info['email'],
                 google_id=user_info['google_id'],
@@ -884,10 +913,14 @@ async def google_auth(
             await db.commit()
             await db.refresh(user)
 
+            user_create_time = time.time() - user_create_start
+            if user_create_time > 2.0:
+                logger.warning(f"🐌 GOOGLE AUTH SLOW USER CREATION: {user_create_time:.2f}s")
+
             # Set up default journal collection for new user
             # await JournalService.setup_user_journal_async(db, user.id)  # Temporarily disabled
 
-            logger.info(f"New user created with Google OAuth: {user.email} (ID: {user.id})")
+            logger.info(f"✅ GOOGLE AUTH: New user created with Google OAuth: {user.email} (ID: {user.id})")
 
             log_security_event(
                 event_type="google_registration_success",
@@ -898,32 +931,40 @@ async def google_auth(
 
         # Check if user is active
         if not user.is_active:
-            logger.warning(f"Inactive user attempted login: {user.email}")
+            logger.warning(f"❌ GOOGLE AUTH: Inactive user attempted login: {user.email}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Account is deactivated"
             )
 
-        # Create access token
-        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-        access_token = create_access_token(
-            data={"sub": user.email, "user_id": user.id},
-            expires_delta=access_token_expires
-        )
+        # Create session tokens with cookies (like regular login)
+        token_start = time.time()
+        tokens = enhanced_auth_service.create_session_tokens(user, remember_me=True)
+        token_time = time.time() - token_start
 
-        logger.info(f"Google OAuth successful for user: {user.email}")
+        if token_time > 3.0:
+            logger.warning(f"🐌 GOOGLE AUTH SLOW TOKEN CREATION: {token_time:.2f}s")
+
+        # Set auth cookies for session persistence
+        enhanced_auth_service.set_auth_cookies(response, tokens)
+
+        total_time = time.time() - google_auth_start_time
+        logger.info(f"✅ GOOGLE AUTH SUCCESS: {user.email} completed in {total_time:.2f}s")
+
+        if total_time > 10.0:
+            logger.warning(f"🐌 GOOGLE AUTH SLOW TOTAL: {total_time:.2f}s")
 
         log_security_event(
             event_type="google_login_success",
-            details={"email": user.email, "user_id": user.id},
+            details={"email": user.email, "user_id": user.id, "total_time": total_time},
             level="info",
             user_id=user.id
         )
 
         return GoogleAuthResponse(
-            access_token=access_token,
+            access_token=tokens["access_token"],
             token_type="bearer",
-            expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            expires_in=tokens["expires_in"],
             user=UserResponse(
                 id=user.id,
                 email=user.email,
@@ -935,12 +976,15 @@ async def google_auth(
         )
 
     except HTTPException:
+        error_time = time.time() - google_auth_start_time
+        logger.warning(f"❌ GOOGLE AUTH HTTP EXCEPTION after {error_time:.2f}s")
         raise
     except GoogleTokenValidationError as e:
-        logger.error(f"Google token validation failed: {str(e)}")
+        error_time = time.time() - google_auth_start_time
+        logger.error(f"❌ GOOGLE AUTH: Token validation failed after {error_time:.2f}s: {str(e)}")
         log_security_event(
             event_type="google_auth_failed",
-            details={"reason": "token_validation_error", "error": str(e)},
+            details={"reason": "token_validation_error", "error": str(e), "elapsed_time": error_time},
             level="warning"
         )
         raise HTTPException(
@@ -948,11 +992,12 @@ async def google_auth(
             detail="Invalid Google token"
         )
     except Exception as e:
-        logger.error(f"Google OAuth error: {str(e)}")
+        error_time = time.time() - google_auth_start_time
+        logger.error(f"💥 GOOGLE AUTH CRITICAL FAILURE after {error_time:.2f}s: {str(e)}")
         logger.exception("Google OAuth exception details:")
         log_security_event(
             event_type="google_auth_error",
-            details={"error": str(e)},
+            details={"error": str(e), "error_type": type(e).__name__, "elapsed_time": error_time},
             level="error"
         )
         raise HTTPException(

@@ -56,56 +56,49 @@ class EnhancedAuthService:
     
     def set_auth_cookies(self, response: Response, tokens: Dict[str, Any]) -> None:
         """Set secure HTTP-only authentication cookies."""
-
+        
         # Calculate cookie max age based on remember_me setting
         max_age = settings.COOKIE_MAX_AGE if tokens.get("remember_me") else settings.SESSION_EXPIRE_MINUTES * 60
-
-        # IMPORTANT: App Runner uses HTTPS, so we need Secure=True for cross-origin cookies
-        # Auto-detect if we should use secure cookies (production with HTTPS)
-        is_secure = settings.COOKIE_SECURE or settings.APP_ENV == "production"
-
         # In dev over HTTP, browsers reject SameSite=None without Secure. Fallback to Lax when not secure.
         samesite_value = settings.COOKIE_SAMESITE
-        if (samesite_value or "").lower() == "none" and not is_secure:
+        if (samesite_value or "").lower() == "none" and not settings.COOKIE_SECURE:
             samesite_value = "lax"
-
-
+        
         # Set access token cookie
         response.set_cookie(
             key="access_token",
             value=tokens["access_token"],
             max_age=max_age,
             httponly=settings.COOKIE_HTTPONLY,
-            secure=is_secure,
+            secure=settings.COOKIE_SECURE,
             samesite=samesite_value,
             domain=settings.COOKIE_DOMAIN,
             path=settings.COOKIE_PATH
         )
-
+        
         # Set refresh token cookie (longer expiration)
         response.set_cookie(
-            key="refresh_token",
+            key="refresh_token", 
             value=tokens["refresh_token"],
             max_age=tokens["refresh_expires_in"],
             httponly=True,  # Always HTTP-only for refresh tokens
-            secure=is_secure,
+            secure=settings.COOKIE_SECURE,
             samesite=samesite_value,
             domain=settings.COOKIE_DOMAIN,
             path=settings.COOKIE_PATH
         )
-
+        
         # Set session info cookie (not HTTP-only for frontend access)
         response.set_cookie(
             key="auth_session",
             value="true",
             max_age=max_age,
             httponly=False,  # Frontend needs to read this
-            secure=is_secure,
+            secure=settings.COOKIE_SECURE,
             samesite=samesite_value,
             domain=settings.COOKIE_DOMAIN,
             path=settings.COOKIE_PATH
         )
-
         # CSRF double-submit cookie for cookie-auth flows
         if settings.CSRF_ENABLED:
             from app.utils.security import generate_secure_random_string
@@ -115,12 +108,11 @@ class EnhancedAuthService:
                 value=csrf_token,
                 max_age=max_age,
                 httponly=False,  # Must be readable by JS to set header
-                secure=is_secure,
+                secure=settings.COOKIE_SECURE,
                 samesite=samesite_value,
                 domain=settings.COOKIE_DOMAIN,
                 path=settings.COOKIE_PATH
             )
-
     
     def clear_auth_cookies(self, response: Response) -> None:
         """Clear all authentication cookies."""

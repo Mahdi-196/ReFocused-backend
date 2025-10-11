@@ -133,6 +133,11 @@ app.include_router(monitoring_router)
 from app.api.v1.endpoints.auth import enhanced_refresh_token as _refresh_handler
 app.add_api_route("/auth/refresh", _refresh_handler, methods=["POST"], tags=["auth"])  # delegates to /api/v1/auth/refresh handler
 
+# Add mood route aliases (needed in production until frontend is updated)
+from app.routers import mood as mood_router
+app.include_router(mood_router.router, prefix="/mood", tags=["mood-alias-prod"])
+logger.info("✅ Mood route aliases added: /mood/* -> /api/v1/mood/* (production compatible)")
+
 def _setup_sentry_and_tracing():
     if settings.SENTRY_DSN:
         try:
@@ -228,27 +233,6 @@ async def root():
             "api": "/api/v1",
             "docs": "/docs" if not settings.is_production() else "disabled"
         }
-    }
-
-@app.get("/debug/version")
-async def version_debug():
-    """Debug endpoint to verify deployment folder and code version."""
-    import datetime
-    return {
-        "message": "ReFocused API - MIDDLEWARE CACHED BODY",
-        "version": "1.0.10-oct6-2025-mw-cache",
-        "deployment_source": "/app folder from deployment/ directory",
-        "changes_applied": [
-            "Fixed request.json() error - now using cached body from middleware",
-            "Middleware reads body once, register uses cached version",
-            "No Pydantic on register - manual JSON parsing from cached body",
-            "EmailStr fully removed - str with regex validation (no DNS)"
-        ],
-        "timestamp": datetime.datetime.utcnow().isoformat(),
-        "docker_build_date": "2025-10-06T22:15:00",
-        "environment": settings.APP_ENV,
-        "register_endpoint": "/api/v1/auth/register",
-        "fix_for": "JSON parse error when middleware already consumed request body"
     }
 
 if __name__ == "__main__":

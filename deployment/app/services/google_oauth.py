@@ -31,49 +31,71 @@ class GoogleOAuthService:
     async def verify_token(self, token: str) -> Dict[str, Any]:
         """
         Verify Google ID token and extract user information.
-        
+
         Args:
             token: Google ID token from frontend
-            
+
         Returns:
             Dict containing user info if valid
-            
+
         Raises:
             GoogleTokenValidationError: If token validation fails
         """
         if not token or not token.strip():
             raise GoogleTokenValidationError("Token cannot be empty")
-            
+
         try:
+            logger.info("🔍 GOOGLE TOKEN VERIFICATION: Starting token verification")
+
             # Verify the token with Google's servers using the official library
             # This validates signature, expiration, issuer, and audience
-            # Run in a thread with a strict timeout to prevent Lambda hangs
+            # Run in a thread with a 20-second timeout (increased from 8s to handle network latency)
             def _verify_sync() -> Dict[str, Any]:
-                return id_token.verify_oauth2_token(
+                logger.info("🔍 GOOGLE TOKEN VERIFICATION: Calling Google API")
+                result = id_token.verify_oauth2_token(
                     token,
                     requests.Request(),
                     self.client_id,
                 )
+                logger.info("✅ GOOGLE TOKEN VERIFICATION: Google API call successful")
+                return result
 
-            idinfo = await asyncio.wait_for(asyncio.to_thread(_verify_sync), timeout=8)
+            try:
+                idinfo = await asyncio.wait_for(asyncio.to_thread(_verify_sync), timeout=20.0)
+                logger.info("✅ GOOGLE TOKEN VERIFICATION: Token verified successfully")
+            except asyncio.TimeoutError:
+                logger.error("💥 GOOGLE TOKEN VERIFICATION: Timeout after 20 seconds")
+                raise GoogleTokenValidationError("Token verification timed out - Google API may be slow or unavailable")
             
             # Verify the token was issued by Google
+            logger.info(f"🔍 GOOGLE TOKEN VERIFICATION: Checking issuer: {idinfo.get('iss')}")
             if idinfo['iss'] not in ['accounts.google.com', 'https://accounts.google.com']:
-                raise GoogleTokenValidationError(f"Invalid token issuer: {idinfo['iss']}")
-            
+                error_msg = f"Invalid token issuer: {idinfo['iss']}"
+                logger.warning(f"❌ GOOGLE TOKEN VERIFICATION: {error_msg}")
+                raise GoogleTokenValidationError(error_msg)
+
             # Verify audience matches our client ID
+            logger.info(f"🔍 GOOGLE TOKEN VERIFICATION: Checking audience")
             if idinfo['aud'] != self.client_id:
-                raise GoogleTokenValidationError("Token audience does not match client ID")
-                
+                error_msg = "Token audience does not match client ID"
+                logger.warning(f"❌ GOOGLE TOKEN VERIFICATION: {error_msg}")
+                raise GoogleTokenValidationError(error_msg)
+
             # Extract and validate required fields
             google_id = idinfo.get('sub')
             email = idinfo.get('email')
-            
+
+            logger.info(f"🔍 GOOGLE TOKEN VERIFICATION: Extracting user data for {email}")
+
             if not google_id:
-                raise GoogleTokenValidationError("Token missing required 'sub' field")
+                error_msg = "Token missing required 'sub' field"
+                logger.warning(f"❌ GOOGLE TOKEN VERIFICATION: {error_msg}")
+                raise GoogleTokenValidationError(error_msg)
             if not email:
-                raise GoogleTokenValidationError("Token missing required 'email' field")
-            
+                error_msg = "Token missing required 'email' field"
+                logger.warning(f"❌ GOOGLE TOKEN VERIFICATION: {error_msg}")
+                raise GoogleTokenValidationError(error_msg)
+
             # Extract user information
             user_info = {
                 'google_id': google_id,
@@ -85,26 +107,33 @@ class GoogleOAuthService:
                 'picture': idinfo.get('picture', ''),
                 'locale': idinfo.get('locale', ''),
             }
-            
+
             # Log successful verification
-            logger.info(f"Successfully verified Google token for user: {email}")
-            
+            logger.info(f"✅ GOOGLE TOKEN VERIFICATION: Successfully verified token for user: {email}")
+
             return user_info
-            
+
+        except GoogleTokenValidationError:
+            # Re-raise our custom errors
+            raise
+        except asyncio.TimeoutError:
+            # Already handled above, but catch again just in case
+            raise
         except ValueError as e:
             # Invalid token (signature, expiration, etc.)
             error_msg = f"Invalid Google token: {str(e)}"
-            logger.warning(error_msg)
+            logger.warning(f"❌ GOOGLE TOKEN VERIFICATION: {error_msg}")
             raise GoogleTokenValidationError(error_msg)
         except GoogleAuthError as e:
             # Google Auth library specific errors
             error_msg = f"Google authentication error: {str(e)}"
-            logger.warning(error_msg)
+            logger.warning(f"❌ GOOGLE TOKEN VERIFICATION: {error_msg}")
             raise GoogleTokenValidationError(error_msg)
         except Exception as e:
             # Other unexpected errors
             error_msg = f"Unexpected error during Google token verification: {str(e)}"
-            logger.error(error_msg)
+            logger.error(f"💥 GOOGLE TOKEN VERIFICATION: {error_msg}")
+            logger.exception("Google token verification exception details:")
             raise GoogleTokenValidationError(error_msg)
     
     async def verify_id_token(self, id_token: str) -> Dict[str, Any]:

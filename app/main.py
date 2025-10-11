@@ -221,6 +221,11 @@ except Exception as e:
 from app.api.v1.endpoints.auth import enhanced_refresh_token as _refresh_handler
 app.add_api_route("/auth/refresh", _refresh_handler, methods=["POST"], tags=["auth"])  # delegates to /api/v1/auth/refresh handler
 
+# Add mood route aliases (needed in production until frontend is updated)
+from app.routers import mood as mood_router
+app.include_router(mood_router.router, prefix="/mood", tags=["mood-alias-prod"])
+logger.info("✅ Mood route aliases added: /mood/* -> /api/v1/mood/* (production compatible)")
+
 # Production: Skip route aliases (frontend should use /api/v1)
 if settings.is_development():
     # TEMPORARY: Add route aliases for frontend compatibility (missing /api/v1 prefix)
@@ -231,11 +236,11 @@ if settings.is_development():
     app.include_router(auth.router, prefix="/auth", tags=["auth-alias"])
     logger.info("✅ Auth route aliases added: /auth/* -> /api/v1/auth/*")
     
-    # Add AI route aliases  
+    # Add AI route aliases
     from app.api.v1.endpoints import ai
     app.include_router(ai.router, prefix="/ai", tags=["ai-alias"])
     logger.info("✅ AI route aliases added: /ai/* -> /api/v1/ai/*")
-    
+
     logger.info("⚠️ IMPORTANT: Route aliases are temporary - update frontend to use /api/v1 prefix")
 else:
     logger.info("🏭 Production mode - route aliases disabled (use /api/v1 prefix)")
@@ -325,9 +330,15 @@ async def cors_middleware(request: Request, call_next):
 @app.middleware("http")
 async def google_oauth_coop_middleware(request: Request, call_next):
     response = await call_next(request)
-    
-    # Always allow popups for OAuth - this is required for Google OAuth to work
-    response.headers["Cross-Origin-Opener-Policy"] = "same-origin-allow-popups"
+
+    # For Google OAuth endpoints, use unsafe-none to allow window.postMessage
+    # For other endpoints, use same-origin-allow-popups for better security
+    if "/auth/google" in request.url.path or "/google" in request.url.path:
+        response.headers["Cross-Origin-Opener-Policy"] = "unsafe-none"
+        logger.info(f"🔓 COOP set to unsafe-none for Google OAuth: {request.url.path}")
+    else:
+        response.headers["Cross-Origin-Opener-Policy"] = "same-origin-allow-popups"
+
     response.headers["Cross-Origin-Embedder-Policy"] = "unsafe-none"
     # Echo observability headers for debugging (non-sensitive)
     app_env = request.headers.get("x-app-env")

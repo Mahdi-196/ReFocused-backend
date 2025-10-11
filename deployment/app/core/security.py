@@ -39,15 +39,10 @@ if not security_logger.handlers:
 # Using bcrypt for password hashing with configured rounds for performance
 # bcrypt rounds=12 provides ~400ms hashing time (vs rounds=14 at ~1600ms)
 # This is still OWASP-compliant and secure while preventing registration timeouts
-# Use bcrypt directly to avoid passlib's buggy wrap detection in Alpine
-import bcrypt as _bcrypt_module
-
 pwd_context = CryptContext(
     schemes=["bcrypt"],
     deprecated="auto",
-    bcrypt__rounds=settings.BCRYPT_ROUNDS,
-    # Skip the buggy wrap detection - not needed in modern bcrypt
-    bcrypt__ident="2b"  # Force 2b variant which doesn't have wrap bug
+    bcrypt__rounds=settings.BCRYPT_ROUNDS
 )
 
 def log_security_event(event_type: str, details: Dict[str, Any], 
@@ -72,20 +67,12 @@ def log_security_event(event_type: str, details: Dict[str, Any],
     log_method(json.dumps(log_data))
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against its hash using bcrypt directly."""
-    password_bytes = plain_password.encode('utf-8')[:72]
-    hashed_bytes = hashed_password.encode('utf-8')
-    return _bcrypt_module.checkpw(password_bytes, hashed_bytes)
+    """Verify a password against its hash."""
+    return pwd_context.verify(plain_password, hashed_password)
 
 def get_password_hash(password: str) -> str:
-    """Generate password hash using bcrypt directly (bypasses passlib's buggy wrap detection)."""
-    # Bcrypt has a 72-byte limit, truncate password for safety
-    password_bytes = password.encode('utf-8')[:72]
-
-    # Use bcrypt directly to avoid passlib's Alpine/ARM compatibility issues
-    rounds = getattr(settings, 'BCRYPT_ROUNDS', 12)
-    hashed = _bcrypt_module.hashpw(password_bytes, _bcrypt_module.gensalt(rounds=rounds))
-    return hashed.decode('utf-8')
+    """Generate password hash."""
+    return pwd_context.hash(password)
 
 def _get_signing_params() -> Dict[str, Any]:
     """Return key and algorithm for JWT signing based on settings."""

@@ -175,10 +175,6 @@ async def _run_db_preflight(url: str) -> None:
 
 async def get_db():
     """Dependency function that yields db sessions"""
-    import time
-    get_db_start = time.time()
-    logger.info(f"🗄️  GET_DB START: {get_db_start:.3f}")
-
     global _db_preflight_ran
     if not _db_preflight_ran:
         _db_preflight_ran = True
@@ -210,18 +206,11 @@ async def get_db():
             engine._diag_events = True  # type: ignore[attr-defined]
     except Exception:
         pass
-    session_create_start = time.time()
-    logger.info(f"🗄️  CREATING DB SESSION: {session_create_start:.3f}")
-
     async with async_session() as session:
         try:
-            session_created = time.time()
-            logger.info(f"🗄️  DB SESSION CREATED: {session_created:.3f}, took {session_created - session_create_start:.3f}s")
             yield session
         finally:
             await session.close()
-            session_closed = time.time()
-            logger.info(f"🗄️  DB SESSION CLOSED: {session_closed:.3f}, total get_db time {session_closed - get_db_start:.3f}s")
 
 def get_db_session():
     """Context manager for database sessions (for background tasks)"""

@@ -65,17 +65,12 @@ class ProductionMiddleware(BaseHTTPMiddleware):
         # Skip processing for certain paths
         skip_monitoring = request.url.path in self.skip_monitoring or request.method == "OPTIONS"
         skip_security = request.url.path in self.skip_security or request.method == "OPTIONS"
-
+        
         if skip_monitoring and skip_security:
             return await call_next(request)
-
+        
         # Start timing
         start_time = time.time()
-
-        # DEBUG: Log entry to middleware
-        if "/register" in request.url.path:
-            self.logger.info(f"🟢 MIDDLEWARE START: {request.url.path} at {time.time():.3f}")
-
         client_ip = get_client_ip(request)
         
         # Generate correlation ID for tracking
@@ -93,26 +88,13 @@ class ProductionMiddleware(BaseHTTPMiddleware):
         
         # Security validation
         if not skip_security:
-            if "/register" in request.url.path:
-                self.logger.info(f"🔒 SECURITY CHECK START: {time.time():.3f}")
-
             security_response = await self._validate_security(request, client_ip)
-
-            if "/register" in request.url.path:
-                self.logger.info(f"🔒 SECURITY CHECK END: {time.time():.3f}, took {time.time() - start_time:.3f}s")
-
             if security_response:
                 return security_response
-
+        
         # Process request
         try:
-            if "/register" in request.url.path:
-                self.logger.info(f"⏩ CALLING NEXT (FastAPI): {time.time():.3f}")
-
             response = await call_next(request)
-
-            if "/register" in request.url.path:
-                self.logger.info(f"✅ RESPONSE RECEIVED: {time.time():.3f}, total time {time.time() - start_time:.3f}s")
             
             # Add security and monitoring headers
             if not skip_monitoring:
@@ -192,27 +174,15 @@ class ProductionMiddleware(BaseHTTPMiddleware):
     async def _check_malicious_content(self, request: Request, client_ip: str) -> bool:
         """Check request body for malicious content."""
         try:
-            check_start = time.time()
-            if "/register" in request.url.path:
-                self.logger.info(f"📄 BODY CHECK START: {time.time():.3f}")
-
             # Only check text content to avoid binary data issues
             content_type = request.headers.get("content-type", "")
             if not any(t in content_type for t in ["application/json", "application/x-www-form-urlencoded", "text/"]):
                 return False
 
-            # Read body safely
-            if "/register" in request.url.path:
-                self.logger.info(f"📖 READING BODY: {time.time():.3f}")
-
+            # Read body safely and cache it in request.state for later reuse
             body = await request.body()
-
-            # Cache the body for later use by endpoints (since we consumed it)
+            # Cache the body so it can be read again by the endpoint
             request.state.cached_body = body
-
-            if "/register" in request.url.path:
-                self.logger.info(f"📖 BODY READ COMPLETE: {time.time():.3f}, took {time.time() - check_start:.3f}s, size {len(body)} bytes")
-                self.logger.info(f"📦 CACHED BODY IN request.state.cached_body")
 
             if not body:
                 return False
