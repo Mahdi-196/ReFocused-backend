@@ -129,6 +129,10 @@ app.include_router(api_router, prefix="/api/v1")
 # Include monitoring routes at root level (no prefix)
 app.include_router(monitoring_router)
 
+# Root-level mood router alias for backwards compatibility (frontend calls /api/mood/...)
+from app.routers import mood as mood_router
+app.include_router(mood_router.router, prefix="/api/mood", tags=["mood-alias"])
+
 # Root-level auth refresh alias for clients calling /auth/refresh
 from app.api.v1.endpoints.auth import enhanced_refresh_token as _refresh_handler
 app.add_api_route("/auth/refresh", _refresh_handler, methods=["POST"], tags=["auth"])  # delegates to /api/v1/auth/refresh handler
@@ -200,7 +204,21 @@ async def startup_event():
             logger.error(f"❌ Database connection failed: {str(e)}")
             metrics.set_health_status(False)
             raise
-    
+
+    # Test Redis connection
+    try:
+        from app.caching.redis_cache import cache
+        if cache.enabled:
+            ping_result = await cache.ping()
+            if ping_result:
+                logger.info("✅ Redis connection successful")
+            else:
+                logger.warning("⚠️ Redis connection test failed, will use fallback caching")
+        else:
+            logger.info("ℹ️ Redis caching is disabled")
+    except Exception as e:
+        logger.warning(f"⚠️ Redis health check failed: {e}, will use fallback caching")
+
     # Log configuration
     logger.info(f"🏃 Running in {settings.APP_ENV} mode")
     logger.info(f"🔒 Rate limiting: {'enabled' if settings.RATE_LIMIT_ENABLED else 'disabled'}")

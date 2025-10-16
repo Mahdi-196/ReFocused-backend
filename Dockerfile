@@ -1,12 +1,17 @@
-# Use a known working Python image
-FROM python:3.11-alpine AS builder
+# Multi-stage build for AWS App Runner compatibility (Debian Bullseye - stable)
+FROM python:3.11-bullseye AS builder
 
-# Install build dependencies for Alpine
-RUN apk add --no-cache \
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    DEBIAN_FRONTEND=noninteractive
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
-    musl-dev \
-    postgresql-dev \
-    linux-headers
+    libpq-dev \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install dependencies
 COPY requirements.txt .
@@ -14,20 +19,23 @@ RUN pip install --user --no-cache-dir --upgrade pip && \
     pip install --user --no-cache-dir -r requirements.txt
 
 # Production stage
-FROM python:3.11-alpine
+FROM python:3.11-slim-bullseye
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PATH=/home/app/.local/bin:$PATH
+    PATH=/home/app/.local/bin:$PATH \
+    DEBIAN_FRONTEND=noninteractive
 
 # Install runtime dependencies only
-RUN apk add --no-cache \
-    postgresql-libs \
-    curl
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user (Alpine syntax)
-RUN adduser -D -s /bin/sh app
+# Create non-root user (Debian syntax)
+RUN useradd -m -s /bin/bash app
 
 # Copy Python packages from builder
 COPY --from=builder /root/.local /home/app/.local

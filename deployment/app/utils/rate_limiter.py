@@ -177,6 +177,10 @@ class RateLimitConfig:
 
 async def apply_auth_rate_limit(request: Request, endpoint_type: str = "login"):
     """Apply rate limiting for authentication endpoints."""
+    import asyncio
+
+    logger.info(f"🔍 RATE LIMIT: Starting rate limit check for {endpoint_type}")
+
     config_map = {
         "login": RateLimitConfig.LOGIN,
         "register": RateLimitConfig.REGISTER,
@@ -184,12 +188,23 @@ async def apply_auth_rate_limit(request: Request, endpoint_type: str = "login"):
     }
 
     config = config_map.get(endpoint_type, RateLimitConfig.LOGIN)
-    await rate_limiter.apply_rate_limit(
-        request,
-        f"auth_{endpoint_type}",
-        config["limit"],
-        config["window"]
-    )
+
+    try:
+        # Add 5-second timeout to prevent hanging
+        await asyncio.wait_for(
+            rate_limiter.apply_rate_limit(
+                request,
+                f"auth_{endpoint_type}",
+                config["limit"],
+                config["window"]
+            ),
+            timeout=5.0
+        )
+        logger.info(f"✅ RATE LIMIT: Check complete for {endpoint_type}")
+    except asyncio.TimeoutError:
+        logger.error(f"⏰ RATE LIMIT TIMEOUT: Rate limiter hung for {endpoint_type}, allowing request through")
+        # Allow request through if rate limiting times out
+        pass
 
 async def apply_api_rate_limit(request: Request, endpoint_type: str = "general_write"):
     """Apply rate limiting for API endpoints."""

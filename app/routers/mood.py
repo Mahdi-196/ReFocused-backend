@@ -234,23 +234,36 @@ async def get_mood_entry(
     user_timezone: Optional[str] = Depends(get_user_timezone)
 ):
     """Get mood entry for a specific date"""
+    import time
+    start_time = time.time()
+    logger.info(f"😊 [MOOD START] User {current_user.id} getting mood entry for {entry_date}")
+
     try:
         # Validate and parse date
         try:
             date_obj = date.fromisoformat(entry_date)
         except ValueError:
+            logger.warning(f"❌ [MOOD INVALID DATE] Invalid date format: {entry_date}")
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Invalid date format. Use YYYY-MM-DD"
             )
-        
+
+        db_start = time.time()
         entry = await MoodCRUD.get_mood_entry(db, current_user.id, date_obj)
+        db_duration = time.time() - db_start
+        logger.info(f"😊 [MOOD DB] Database query completed in {db_duration:.2f}s, entry={'found' if entry else 'not found'}")
+
         if not entry:
+            logger.info(f"😊 [MOOD NOT FOUND] No mood entry for {entry_date}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="No mood entry found for this date"
             )
-        
+
+        total_duration = time.time() - start_time
+        logger.info(f"✅ [MOOD SUCCESS] Mood entry returned in {total_duration:.2f}s")
+
         return MoodResponse(
             id=entry.id,
             user_id=entry.user_id,
@@ -261,11 +274,12 @@ async def get_mood_entry(
             createdAt=entry.created_at,
             updatedAt=getattr(entry, 'updated_at', None)
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting mood entry for date {entry_date}: {str(e)}")
+        total_duration = time.time() - start_time
+        logger.error(f"❌ [MOOD EXCEPTION] Error after {total_duration:.2f}s getting mood entry for date {entry_date}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve mood entry"

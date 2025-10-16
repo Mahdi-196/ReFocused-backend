@@ -37,13 +37,12 @@ if not security_logger.handlers:
     security_logger.setLevel(logging.INFO)
 
 # Using bcrypt for password hashing with configured rounds for performance
-# bcrypt rounds=12 provides ~400ms hashing time (vs rounds=14 at ~1600ms)
+# bcrypt rounds=10 provides ~100ms hashing time (vs rounds=12 at ~400ms, 14 at ~1600ms)
 # This is still OWASP-compliant and secure while preventing registration timeouts
-pwd_context = CryptContext(
-    schemes=["bcrypt"],
-    deprecated="auto",
-    bcrypt__rounds=settings.BCRYPT_ROUNDS
-)
+
+# Use bcrypt library directly to avoid passlib's bug detection issues with long passwords
+import bcrypt
+BCRYPT_ROUNDS = settings.BCRYPT_ROUNDS
 
 def log_security_event(event_type: str, details: Dict[str, Any], 
                       level: str = "info", user_id: Optional[int] = None):
@@ -67,12 +66,29 @@ def log_security_event(event_type: str, details: Dict[str, Any],
     log_method(json.dumps(log_data))
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against its hash."""
-    return pwd_context.verify(plain_password, hashed_password)
+    """Verify a password against its hash using bcrypt directly."""
+    # Truncate password to 72 bytes for bcrypt compatibility
+    password_bytes = plain_password.encode('utf-8')
+    if len(password_bytes) > 72:
+        password_bytes = password_bytes[:72]
+
+    # Use bcrypt directly
+    hashed_bytes = hashed_password.encode('utf-8') if isinstance(hashed_password, str) else hashed_password
+    return bcrypt.checkpw(password_bytes, hashed_bytes)
 
 def get_password_hash(password: str) -> str:
-    """Generate password hash."""
-    return pwd_context.hash(password)
+    """Generate password hash using bcrypt directly."""
+    # Bcrypt has a 72-byte limit - truncate password if needed
+    password_bytes = password.encode('utf-8')
+    if len(password_bytes) > 72:
+        password_bytes = password_bytes[:72]
+
+    # Use bcrypt directly - bypasses passlib's bug detection
+    salt = bcrypt.gensalt(rounds=BCRYPT_ROUNDS)
+    hashed_bytes = bcrypt.hashpw(password_bytes, salt)
+    hashed = hashed_bytes.decode('utf-8')  # Convert back to string for storage
+
+    return hashed
 
 def _get_signing_params() -> Dict[str, Any]:
     """Return key and algorithm for JWT signing based on settings."""

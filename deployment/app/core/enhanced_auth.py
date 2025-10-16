@@ -56,14 +56,14 @@ class EnhancedAuthService:
     
     def set_auth_cookies(self, response: Response, tokens: Dict[str, Any]) -> None:
         """Set secure HTTP-only authentication cookies."""
-        
+
         # Calculate cookie max age based on remember_me setting
         max_age = settings.COOKIE_MAX_AGE if tokens.get("remember_me") else settings.SESSION_EXPIRE_MINUTES * 60
-        # In dev over HTTP, browsers reject SameSite=None without Secure. Fallback to Lax when not secure.
+
+        # Use configured SameSite value directly
+        # For cross-origin cookies, MUST use SameSite=None with Secure=True
         samesite_value = settings.COOKIE_SAMESITE
-        if (samesite_value or "").lower() == "none" and not settings.COOKIE_SECURE:
-            samesite_value = "lax"
-        
+
         # Set access token cookie
         response.set_cookie(
             key="access_token",
@@ -113,18 +113,18 @@ class EnhancedAuthService:
                 domain=settings.COOKIE_DOMAIN,
                 path=settings.COOKIE_PATH
             )
-    
+
     def clear_auth_cookies(self, response: Response) -> None:
         """Clear all authentication cookies."""
         cookie_names = ["access_token", "refresh_token", "auth_session", "csrf_token"]
-        
+
         for cookie_name in cookie_names:
             response.delete_cookie(
                 key=cookie_name,
                 domain=settings.COOKIE_DOMAIN,
                 path=settings.COOKIE_PATH,
                 secure=settings.COOKIE_SECURE,
-                samesite=("lax" if (settings.COOKIE_SAMESITE or "").lower() == "none" and not settings.COOKIE_SECURE else settings.COOKIE_SAMESITE)
+                samesite=settings.COOKIE_SAMESITE  # Use configured value directly
             )
     
     def extract_token_from_request(self, request: Request) -> Optional[str]:
@@ -171,31 +171,27 @@ class EnhancedAuthService:
         return None
     
     async def verify_and_refresh_if_needed(
-        self, 
-        request: Request, 
-        response: Response, 
+        self,
+        request: Request,
+        response: Response,
         db: AsyncSession
     ) -> Optional[Dict[str, Any]]:
         """Verify token and automatically refresh if needed."""
-        
+
         access_token = self.extract_token_from_request(request)
         if not access_token:
-            logger.debug("No access token found in request")
             return None
-        
-        logger.debug(f"Found token: {access_token[:50]}...")
         
         # Check for test tokens first (development/testing)
         from app.core.auth import VALID_TEST_TOKENS
         if settings.is_development() and access_token in VALID_TEST_TOKENS:
-            logger.info(f"Test token detected: {access_token}")
             return {
                 "user_id": 999999,
                 "sub": "test@example.com",
                 "type": "access",
                 "test_token": True
             }
-        
+
         try:
             # Verify access token
             # Verify token; support RS256 when configured
@@ -203,15 +199,13 @@ class EnhancedAuthService:
             key = settings.SECRET_KEY
             if algorithms[0].upper() == "RS256" and settings.JWT_PUBLIC_KEY:
                 key = settings.JWT_PUBLIC_KEY
+
             payload = jwt.decode(access_token, key, algorithms=algorithms)
-            
-            logger.debug(f"Token decoded successfully: sub={payload.get('sub')}, user_id={payload.get('user_id')}")
-            
+
             # Check if token is blacklisted
             if await TokenBlacklist.is_blacklisted(db, access_token):
-                logger.debug("Token is blacklisted")
                 return None
-            
+
             # Check if token expires soon and auto-refresh is enabled
             if settings.AUTO_REFRESH_ENABLED:
                 exp_timestamp = payload.get("exp")
@@ -219,24 +213,17 @@ class EnhancedAuthService:
                     # Both times must be in UTC for correct comparison
                     exp_time = datetime.utcfromtimestamp(exp_timestamp)
                     time_until_expiry = exp_time - datetime.utcnow()
-                    
-                    logger.debug(f"Token expires in {time_until_expiry}, threshold is {settings.AUTO_REFRESH_THRESHOLD_MINUTES} minutes")
-                    
+
                     # If token expires within threshold, refresh automatically
                     if time_until_expiry < timedelta(minutes=settings.AUTO_REFRESH_THRESHOLD_MINUTES):
-                        logger.info(f"Auto-refreshing token for user {payload.get('sub')} (expires in {time_until_expiry})")
                         return await self.refresh_token_flow(request, response, db)
-            
-            logger.debug("Token verification successful")
+
             return payload
-            
+
         except jwt.ExpiredSignatureError:
             # Token expired, try to refresh
-            logger.info("Token expired, attempting refresh")
             return await self.refresh_token_flow(request, response, db)
-        except JWTError as e:
-            # Invalid token
-            logger.debug(f"JWT validation error: {str(e)}")
+        except JWTError:
             return None
     
     async def refresh_token_flow(
@@ -246,11 +233,11 @@ class EnhancedAuthService:
         db: AsyncSession
     ) -> Optional[Dict[str, Any]]:
         """Handle token refresh flow."""
-        
+
         refresh_token = await self.extract_refresh_token_from_request(request)
         if not refresh_token:
             return None
-        
+
         try:
             # Verify refresh token
             payload = jwt.decode(
@@ -258,14 +245,14 @@ class EnhancedAuthService:
                 settings.SECRET_KEY,
                 algorithms=[settings.ALGORITHM]
             )
-            
+
             if payload.get("type") != "refresh":
                 return None
-            
+
             # Check if refresh token is blacklisted
             if await TokenBlacklist.is_blacklisted(db, refresh_token):
                 return None
-            
+
             # Get user - handle both user_id and email-based lookups
             user_id = payload.get("user_id")
             if user_id:
@@ -279,28 +266,27 @@ class EnhancedAuthService:
                     user = result.scalar_one_or_none()
                 else:
                     user = None
-            
+
             if not user or not user.is_active:
                 return None
-            
+
             # Create new tokens
             remember_me = payload.get("remember_me", False)
             new_tokens = self.create_session_tokens(user, remember_me)
-            
+
             # Set new cookies
             self.set_auth_cookies(response, new_tokens)
+
             # Expose refreshed tokens for downstream handlers (optional JSON return)
             try:
                 setattr(request.state, "refreshed_tokens", new_tokens)
             except Exception:
                 pass
-            
+
             # Blacklist old refresh token
             exp_time = datetime.fromtimestamp(payload["exp"])
             await TokenBlacklist.add_token(db, refresh_token, exp_time)
-            
-            logger.info(f"Token refreshed successfully for user {user.id}")
-            
+
             # Return new access token payload
             algorithms = [getattr(settings, "JWT_SIGNING_ALG", settings.ALGORITHM)]
             key = settings.SECRET_KEY
@@ -308,7 +294,7 @@ class EnhancedAuthService:
                 key = settings.JWT_PUBLIC_KEY
             new_payload = jwt.decode(new_tokens["access_token"], key, algorithms=algorithms)
             return new_payload
-            
+
         except (JWTError, ValueError):
             return None
     

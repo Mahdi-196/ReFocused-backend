@@ -188,24 +188,28 @@ async def get_db():
                 pass
         else:
             logger.info("DB PREFLIGHT: disabled (DB_PREFLIGHT_ENABLED=0)")
-    # Attach lightweight engine event hooks once
-    try:
-        if not getattr(engine, "_diag_events", False):
-            @event.listens_for(engine.sync_engine, "connect")
-            def _on_connect(dbapi_connection, connection_record):
-                logger.info("✅ DB EVENT: CONNECT established")
+    # Attach lightweight engine event hooks once (DISABLED for performance - caused blocking on every checkout)
+    # Enable via DB_EVENT_LOGGING=1 environment variable for debugging only
+    event_logging_enabled = os.getenv("DB_EVENT_LOGGING", "0").lower() in ("1", "true", "yes", "on")
+    if event_logging_enabled:
+        try:
+            if not getattr(engine, "_diag_events", False):
+                @event.listens_for(engine.sync_engine, "connect")
+                def _on_connect(dbapi_connection, connection_record):
+                    logger.info("✅ DB EVENT: CONNECT established")
 
-            @event.listens_for(engine.sync_engine, "checkout")
-            def _on_checkout(dbapi_connection, connection_record, connection_proxy):
-                logger.info("✅ DB EVENT: POOL CHECKOUT")
+                @event.listens_for(engine.sync_engine, "checkout")
+                def _on_checkout(dbapi_connection, connection_record, connection_proxy):
+                    logger.info("✅ DB EVENT: POOL CHECKOUT")
 
-            @event.listens_for(engine.sync_engine, "handle_error")
-            def _on_error(exception_context):
-                logger.error(f"❌ DB EVENT: ERROR {getattr(exception_context, 'original_exception', exception_context)}")
+                @event.listens_for(engine.sync_engine, "handle_error")
+                def _on_error(exception_context):
+                    logger.error(f"❌ DB EVENT: ERROR {getattr(exception_context, 'original_exception', exception_context)}")
 
-            engine._diag_events = True  # type: ignore[attr-defined]
-    except Exception:
-        pass
+                engine._diag_events = True  # type: ignore[attr-defined]
+                logger.info("⚠️  DB EVENT LOGGING ENABLED - This will impact performance!")
+        except Exception:
+            pass
     async with async_session() as session:
         try:
             yield session

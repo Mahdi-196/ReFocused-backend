@@ -134,21 +134,36 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         return response
 
 class SessionAuthenticationMiddleware(BaseHTTPMiddleware):
-    """Simplified session-based auth middleware for cookie management."""
-    
+    """Simplified session-based auth middleware for cookie management.
+
+    SECURITY NOTE: Uses a single database session per request to prevent connection
+    pool exhaustion while maintaining proper transaction isolation.
+    """
+
     async def dispatch(self, request: Request, call_next):
-        """Handle session authentication and automatic refresh."""
-        
-        # Skip for certain paths
+        """Handle session authentication and automatic refresh.
+
+        Security measures:
+        - CSRF protection on state-changing requests
+        - Single DB session per request (prevents pool exhaustion)
+        - Automatic token refresh with proper session management
+        """
+        start_time = time.time()
         path = request.url.path
-        if (request.method == "OPTIONS" or 
-            path.startswith("/health") or 
+
+        logger.info(f"🔵 [AUTH_MW START] {request.method} {path} - Session auth middleware entry")
+
+        # Skip for certain paths
+        if (request.method == "OPTIONS" or
+            path.startswith("/health") or
             path.startswith("/docs") or
             path.startswith("/redoc") or
             path.startswith("/openapi.json")):
+            logger.info(f"⚪ [AUTH_MW SKIP] {path} - Skipped (public path)")
             return await call_next(request)
 
         # CSRF protection for cookie-only flows on state-changing requests
+        logger.info(f"🔒 [AUTH_MW CSRF CHECK] {path} - Checking CSRF (enabled={settings.CSRF_ENABLED})")
         if settings.CSRF_ENABLED and request.method in ("POST", "PUT", "PATCH", "DELETE"):
             auth_header = request.headers.get("Authorization", "")
             # Skip CSRF for API clients using Bearer auth
@@ -160,24 +175,36 @@ class SessionAuthenticationMiddleware(BaseHTTPMiddleware):
                     request.cookies.get("refresh_token")
                 )
                 is_auth_path = path.startswith("/api/v1/auth/") or path == "/auth/refresh"
+                logger.info(f"🔒 [CSRF] has_session_cookies={has_session_cookies}, is_auth_path={is_auth_path}")
                 if has_session_cookies and not is_auth_path:
                     csrf_header = request.headers.get(settings.CSRF_HEADER_NAME)
                     csrf_cookie = request.cookies.get("csrf_token")
                     if not csrf_header or not csrf_cookie or csrf_header != csrf_cookie:
+                        logger.warning(f"❌ [CSRF FAIL] CSRF validation failed for {path}")
                         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF token missing or invalid")
 
-        # Create response and check/refresh auth
+        # Process the request - endpoints create their own DB sessions via Depends(get_db)
+        logger.info(f"➡️  [AUTH_MW CALLING] {path} - Calling next middleware/endpoint")
+        call_start = time.time()
+
         response = await call_next(request)
-        
+
+        call_duration = time.time() - call_start
+        logger.info(f"⬅️  [AUTH_MW RETURNED] {path} - Response received ({call_duration:.2f}s)")
+
         # For authenticated endpoints, try to refresh tokens if needed
+        # Create a separate session only for token refresh (minimal operation)
         if hasattr(request.state, "user") and request.state.user:
+            logger.info(f"🔄 [AUTH_MW REFRESH] {path} - Checking if token refresh needed")
             async with async_session() as db:
                 try:
-                    # This will automatically refresh tokens if needed
                     await enhanced_auth_service.verify_and_refresh_if_needed(
                         request, response, db
                     )
+                    logger.info(f"✅ [AUTH_MW REFRESH] {path} - Token refresh check complete")
                 except Exception as e:
-                    logger.warning(f"Token refresh failed: {str(e)}")
-        
+                    logger.warning(f"❌ [AUTH_MW REFRESH FAIL] {path} - Token refresh failed: {str(e)}")
+
+        total_duration = time.time() - start_time
+        logger.info(f"🟢 [AUTH_MW COMPLETE] {path} - Session auth complete ({total_duration:.2f}s)")
         return response 

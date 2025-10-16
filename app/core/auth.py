@@ -219,20 +219,33 @@ async def get_current_user(
     db: AsyncSession = Depends(get_db)
 ) -> User:
     """Get the current user from request with enhanced authentication and automatic refresh."""
-    
+    import time
+    start_time = time.time()
+    path = request.url.path
+
+    logger.info(f"🔐 [GET_USER START] {path} - Getting current user")
+
     # Always use enhanced auth service for consistent authentication
+    auth_start = time.time()
     user = await enhanced_auth_service.get_current_user_from_request(request, response, db)
-    
+    auth_duration = time.time() - auth_start
+
+    logger.info(f"🔐 [GET_USER AUTH] {path} - Auth service returned in {auth_duration:.2f}s, user={'found' if user else 'not found'}")
+
     if not user:
+        logger.warning(f"❌ [GET_USER FAIL] {path} - No user found, raising 401")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     # Store user in request state for middleware compatibility
     request.state.user = user
-    
+
+    total_duration = time.time() - start_time
+    logger.info(f"✅ [GET_USER SUCCESS] {path} - User {user.id} authenticated in {total_duration:.2f}s")
+
     return user
 
 async def get_current_active_user(

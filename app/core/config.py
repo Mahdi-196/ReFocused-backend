@@ -29,13 +29,13 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = Field(7, env="REFRESH_TOKEN_EXPIRE_DAYS")
     REMEMBER_ME_EXPIRE_DAYS: int = Field(30, env="REMEMBER_ME_EXPIRE_DAYS")  # Remember me duration
     PASSWORD_HASHER: str = Field("bcrypt", env="PASSWORD_HASHER")
-    BCRYPT_ROUNDS: int = Field(12, env="BCRYPT_ROUNDS")  # Reduced from 14 to 12 for 4x faster hashing (~400ms vs ~1600ms)
+    BCRYPT_ROUNDS: int = Field(10, env="BCRYPT_ROUNDS")  # Optimized: 10 rounds = ~100ms (vs 12=400ms, 14=1600ms). Still OWASP compliant and secure.
 
     # Cookie Settings
-    COOKIE_SECURE: bool = Field(False, env="COOKIE_SECURE")  # Set to True in production with HTTPS
+    COOKIE_SECURE: bool = Field(True, env="COOKIE_SECURE")  # True for HTTPS (AWS App Runner)
     COOKIE_HTTPONLY: bool = Field(True, env="COOKIE_HTTPONLY")
-    COOKIE_SAMESITE: str = Field("none", env="COOKIE_SAMESITE")  # lax, strict, none
-    COOKIE_DOMAIN: Optional[str] = Field(None, env="COOKIE_DOMAIN")
+    COOKIE_SAMESITE: str = Field("none", env="COOKIE_SAMESITE")  # none for cross-origin (requires Secure=True)
+    COOKIE_DOMAIN: Optional[str] = Field(None, env="COOKIE_DOMAIN")  # None = current domain only
     COOKIE_PATH: str = Field("/", env="COOKIE_PATH")
     COOKIE_MAX_AGE: int = Field(86400 * 30, env="COOKIE_MAX_AGE")  # 30 days
 

@@ -26,7 +26,6 @@ class RedisCache:
     
     def __init__(self):
         self._redis: Optional[Redis] = None
-        self._connection_pool = None
         self.enabled = hasattr(settings, 'REDIS_URL') and settings.REDIS_URL
         
         if self.enabled:
@@ -35,27 +34,33 @@ class RedisCache:
     def _setup_connection(self):
         """Setup Redis connection with proper configuration."""
         try:
-            pool_kwargs = dict(
-                encoding="utf-8",
-                decode_responses=False,  # We handle serialization manually
-                retry_on_timeout=True,
-                socket_keepalive=True,
-                max_connections=20,
-            )
-            # Avoid invalid keepalive options on non-Linux platforms
+            # Base connection parameters
+            redis_params = {
+                "encoding": "utf-8",
+                "decode_responses": False,
+                "retry_on_timeout": True,
+                "max_connections": 20,
+                "health_check_interval": 30,
+                "socket_connect_timeout": 5,
+                "socket_timeout": 5,
+            }
+
+            # For Linux, add keepalive options
             if platform.system() == "Linux":
-                pool_kwargs["socket_keepalive_options"] = {
+                redis_params["socket_keepalive"] = True
+                redis_params["socket_keepalive_options"] = {
                     1: 1,  # TCP_KEEPIDLE
                     2: 3,  # TCP_KEEPINTVL
                     3: 5,  # TCP_KEEPCNT
                 }
 
-            self._connection_pool = redis.ConnectionPool.from_url(
-                settings.REDIS_URL,
-                **pool_kwargs,
-            )
-            self._redis = redis.Redis(connection_pool=self._connection_pool)
-            logger.info("Redis cache initialized successfully")
+            # The rediss:// URL scheme automatically handles SSL/TLS
+            # No need for additional SSL parameters - redis-py handles it
+            self._redis = redis.from_url(settings.REDIS_URL, **redis_params)
+
+            if settings.REDIS_URL.startswith('rediss://'):
+                logger.info("🔐 Redis SSL/TLS enabled via rediss:// URL scheme")
+            logger.info("✅ Redis cache initialized successfully with 5s timeouts")
         except Exception as e:
             logger.warning(f"Failed to initialize Redis cache: {e}")
             self.enabled = False
@@ -196,20 +201,74 @@ class RedisCache:
         """Get TTL for key."""
         if not self.enabled:
             return None
-        
+
         try:
             ttl = await self._redis.ttl(key)
             return ttl if ttl > 0 else None
         except RedisError as e:
             logger.warning(f"Cache TTL error for key {key}: {e}")
             return None
-    
+
+    async def delete_expired(self, pattern: str, timestamp: float) -> int:
+        """Delete keys matching pattern that are older than timestamp.
+
+        This is used by rate limiter to clean up old rate limit entries.
+        Note: Redis handles TTL automatically, so this is mainly for manual cleanup.
+        """
+        if not self.enabled:
+            return 0
+
+        try:
+            keys = await self._redis.keys(pattern)
+            deleted = 0
+            for key in keys:
+                # Check if key exists and delete it
+                if await self._redis.exists(key):
+                    await self._redis.delete(key)
+                    deleted += 1
+            return deleted
+        except RedisError as e:
+            logger.warning(f"Cache delete_expired error for pattern {pattern}: {e}")
+            return 0
+
+    async def count_keys(self, pattern: str) -> int:
+        """Count keys matching a pattern."""
+        if not self.enabled:
+            return 0
+
+        try:
+            keys = await self._redis.keys(pattern)
+            return len(keys)
+        except RedisError as e:
+            logger.warning(f"Cache count_keys error for pattern {pattern}: {e}")
+            return 0
+
+    async def ping(self) -> bool:
+        """Test Redis connection with timeout."""
+        if not self.enabled:
+            return False
+
+        try:
+            # Test connection with 2-second timeout
+            result = await asyncio.wait_for(self._redis.ping(), timeout=2.0)
+            if result:
+                logger.info("✅ Redis PING successful - connection is healthy")
+                return True
+            return False
+        except asyncio.TimeoutError:
+            logger.error("❌ Redis PING timeout after 2s - connection issue")
+            return False
+        except RedisError as e:
+            logger.error(f"❌ Redis PING failed: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"❌ Redis PING unexpected error: {e}")
+            return False
+
     async def close(self):
         """Close Redis connection."""
         if self._redis:
             await self._redis.close()
-        if self._connection_pool:
-            await self._connection_pool.disconnect()
 
 
 # Global cache instance
