@@ -642,7 +642,7 @@ class CalendarMoodEntry(Base):
 # UserDailyStreak model - tracks detailed daily interaction history
 class UserDailyStreak(Base):
     __tablename__ = "user_daily_streaks"
-    
+
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     date = Column(Date, nullable=False, index=True)  # User's local date
@@ -652,14 +652,32 @@ class UserDailyStreak(Base):
     interaction_types = Column(JSON, nullable=False, default=list)  # List of interaction types that day
     timezone = Column(String(50), nullable=False)  # User's timezone when interaction occurred
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
+
     # Relationships
     user = relationship("User")
-    
+
     # Constraints
     __table_args__ = (
         UniqueConstraint('user_id', 'date', name='uix_user_daily_streak_date'),
         Index('idx_user_daily_streaks_user_date', 'user_id', 'date'),
+    )
+
+# UserFeatureVote model - tracks feature voting (one vote per user)
+class UserFeatureVote(Base):
+    __tablename__ = "user_feature_votes"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    vote_id = Column(String(200), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    # Relationships
+    user = relationship("User")
+
+    # Constraints - one vote per user
+    __table_args__ = (
+        UniqueConstraint('user_id', name='uix_user_feature_votes_user'),
+        Index('idx_user_feature_votes_user', 'user_id'),
     )
 
  

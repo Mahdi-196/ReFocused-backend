@@ -110,7 +110,7 @@ async def get_today_mood(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="No mood entry found for today"
             )
-        
+
         return MoodResponse(
             id=entry.id,
             user_id=entry.user_id,
@@ -121,11 +121,56 @@ async def get_today_mood(
             createdAt=entry.created_at,
             updatedAt=getattr(entry, 'updated_at', None)
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error getting today's mood entry for user {current_user.id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve mood entry"
+        )
+
+@router.get("/entries/{entry_date}", response_model=MoodResponse)
+async def get_mood_by_date(
+    entry_date: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get mood entry by date (frontend compatibility alias)"""
+    try:
+        from datetime import datetime
+        # Parse the date string
+        target_date = datetime.strptime(entry_date, "%Y-%m-%d").date()
+
+        # Get mood entry for that date
+        entry = await MoodCRUD.get_mood_entry(db, current_user.id, target_date)
+        if not entry:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No mood entry found for {entry_date}"
+            )
+
+        return MoodResponse(
+            id=entry.id,
+            user_id=entry.user_id,
+            date=entry.entry_date,
+            happiness=entry.happiness,
+            focus=entry.focus,
+            stress=entry.stress,
+            createdAt=entry.created_at,
+            updatedAt=getattr(entry, 'updated_at', None)
+        )
+
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid date format. Use YYYY-MM-DD"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting mood entry for date {entry_date}, user {current_user.id}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve mood entry"
@@ -234,23 +279,36 @@ async def get_mood_entry(
     user_timezone: Optional[str] = Depends(get_user_timezone)
 ):
     """Get mood entry for a specific date"""
+    import time
+    start_time = time.time()
+    logger.info(f"😊 [MOOD START] User {current_user.id} getting mood entry for {entry_date}")
+
     try:
         # Validate and parse date
         try:
             date_obj = date.fromisoformat(entry_date)
         except ValueError:
+            logger.warning(f"❌ [MOOD INVALID DATE] Invalid date format: {entry_date}")
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Invalid date format. Use YYYY-MM-DD"
             )
-        
+
+        db_start = time.time()
         entry = await MoodCRUD.get_mood_entry(db, current_user.id, date_obj)
+        db_duration = time.time() - db_start
+        logger.info(f"😊 [MOOD DB] Database query completed in {db_duration:.2f}s, entry={'found' if entry else 'not found'}")
+
         if not entry:
+            logger.info(f"😊 [MOOD NOT FOUND] No mood entry for {entry_date}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="No mood entry found for this date"
             )
-        
+
+        total_duration = time.time() - start_time
+        logger.info(f"✅ [MOOD SUCCESS] Mood entry returned in {total_duration:.2f}s")
+
         return MoodResponse(
             id=entry.id,
             user_id=entry.user_id,
@@ -261,11 +319,12 @@ async def get_mood_entry(
             createdAt=entry.created_at,
             updatedAt=getattr(entry, 'updated_at', None)
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting mood entry for date {entry_date}: {str(e)}")
+        total_duration = time.time() - start_time
+        logger.error(f"❌ [MOOD EXCEPTION] Error after {total_duration:.2f}s getting mood entry for date {entry_date}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve mood entry"

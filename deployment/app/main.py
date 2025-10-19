@@ -236,11 +236,11 @@ if settings.is_development():
     app.include_router(auth.router, prefix="/auth", tags=["auth-alias"])
     logger.info("✅ Auth route aliases added: /auth/* -> /api/v1/auth/*")
     
-    # Add AI route aliases  
+    # Add AI route aliases
     from app.api.v1.endpoints import ai
     app.include_router(ai.router, prefix="/ai", tags=["ai-alias"])
     logger.info("✅ AI route aliases added: /ai/* -> /api/v1/ai/*")
-    
+
     logger.info("⚠️ IMPORTANT: Route aliases are temporary - update frontend to use /api/v1 prefix")
 else:
     logger.info("🏭 Production mode - route aliases disabled (use /api/v1 prefix)")

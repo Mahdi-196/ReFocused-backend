@@ -42,6 +42,7 @@ async def cast_vote(
         ip_key = f"voting:ip:{ip}:{date_key}"
         ttl_hint = _seconds_until_midnight_utc()
         ip_count = await cache.increment(ip_key, 1, ttl_hint) if cache.enabled else 1
+        ip_count = ip_count if ip_count is not None else 1  # Handle None from cache
         ttl_seconds = await cache.get_ttl(ip_key) if cache.enabled else ttl_hint
         ttl_seconds = ttl_seconds if ttl_seconds is not None else ttl_hint
         if ip_count > ip_limit:

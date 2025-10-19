@@ -361,39 +361,55 @@ async def mark_habit_completion(
 ):
     """
     Mark a habit as completed or uncompleted for a specific date.
-    
+
     This endpoint handles both checking and unchecking habits with
     automatic streak recalculation.
     """
+    import time
+    start_time = time.time()
+    logger.info(f"🎯 [HABIT START] User {current_user.id} marking habit {completion_data.habit_id} completion for {completion_data.date}")
+
     try:
         # Update user's timezone
         if current_user.timezone != user_timezone:
+            logger.info(f"🕐 [HABIT TZ] Updating timezone from {current_user.timezone} to {user_timezone}")
+            tz_start = time.time()
             current_user.timezone = user_timezone
             await db.commit()
-        
+            tz_duration = time.time() - tz_start
+            logger.info(f"🕐 [HABIT TZ] Timezone update committed in {tz_duration:.2f}s")
+
+        db_start = time.time()
         success = await habit_crud.mark_habit_completion(
-            db, 
-            completion_data.habit_id, 
-            completion_data.date, 
-            completion_data.completed, 
+            db,
+            completion_data.habit_id,
+            completion_data.date,
+            completion_data.completed,
             current_user
         )
-        
+        db_duration = time.time() - db_start
+        logger.info(f"🎯 [HABIT DB] Mark completion query completed in {db_duration:.2f}s, success={success}")
+
         if not success:
+            logger.warning(f"❌ [HABIT NOT FOUND] Habit {completion_data.habit_id} not found")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Habit not found"
             )
-        
+
+        total_duration = time.time() - start_time
+        logger.info(f"✅ [HABIT SUCCESS] Habit completion marked in {total_duration:.2f}s")
+
         return {
             "success": True,
             "message": f"Habit {'completed' if completion_data.completed else 'uncompleted'} for {completion_data.date}"
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error marking habit completion: {str(e)}")
+        total_duration = time.time() - start_time
+        logger.error(f"❌ [HABIT EXCEPTION] Error after {total_duration:.2f}s marking habit completion: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update habit completion"

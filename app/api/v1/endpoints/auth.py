@@ -816,12 +816,13 @@ async def google_auth(
 
 
 @router.post("/change-password", response_model=ChangePasswordResponse)
+@router.put("/change-password", response_model=ChangePasswordResponse)
 async def change_password(
     request: ChangePasswordRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Change user password with current password verification."""
+    """Change user password with current password verification (supports both POST and PUT)."""
 
     # Verify current password
     if not verify_password(request.current_password, current_user.hashed_password):
@@ -854,15 +855,16 @@ async def change_password(
 
 
 @router.post("/change-username", response_model=ChangeUsernameResponse)
+@router.put("/change-username", response_model=ChangeUsernameResponse)
 async def change_username(
     request: ChangeUsernameRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Change username with validation."""
+    """Change username with validation (supports both POST and PUT)."""
 
     # Check if username already exists
-    result = await db.execute(select(User).where(User.name == request.new_username))
+    result = await db.execute(select(User).where(User.name == request.new_name))
     if result.scalar_one_or_none():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -871,19 +873,20 @@ async def change_username(
 
     # Update username
     old_username = current_user.name
-    current_user.name = request.new_username
+    current_user.name = request.new_name
     await db.commit()
 
     log_security_event(
         event_type="username_change",
-        details={"user_id": current_user.id, "old_username": old_username, "new_username": request.new_username},
+        details={"user_id": current_user.id, "old_username": old_username, "new_username": request.new_name},
         level="info",
         user_id=current_user.id
     )
 
     return ChangeUsernameResponse(
+        success=True,
         message="Username changed successfully",
-        new_username=request.new_username
+        name=request.new_name
     )
 
 

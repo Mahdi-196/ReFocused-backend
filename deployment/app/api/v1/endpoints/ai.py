@@ -79,7 +79,7 @@ async def get_chat_quota(
     )
 
 @router.get(
-    "/quote-of-day", 
+    "/quote-of-day",
     response_model=QuoteResponse,
     summary="Get Quote of the Day",
     description="Retrieve daily inspirational quote from historical figures with caching"
@@ -88,27 +88,39 @@ async def get_quote_of_day(
     current_user: User = Depends(get_current_user)
 ) -> QuoteResponse:
     """Get daily inspirational quote from AWS Lambda with caching"""
+    import time
+    start_time = time.time()
+    logger.info(f"📝 [QUOTE START] User {current_user.id} requesting quote of day")
+
     try:
+        service_start = time.time()
         result = await ai_service.get_quote_of_day()
-        
+        service_duration = time.time() - service_start
+        logger.info(f"📝 [QUOTE SERVICE] AI service returned in {service_duration:.2f}s")
+
         if not result:
+            logger.warning(f"❌ [QUOTE UNAVAILABLE] Service returned empty result")
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Quote service temporarily unavailable"
             )
-        
+
         if "error" in result:
+            logger.error(f"❌ [QUOTE ERROR] Service error: {result.get('message', 'Unknown error')}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Quote generation failed: {result.get('message', 'Unknown error')}"
             )
-        
+
+        total_duration = time.time() - start_time
+        logger.info(f"✅ [QUOTE SUCCESS] Quote returned in {total_duration:.2f}s")
         return QuoteResponse(**result)
-        
+
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in get_quote_of_day: {e}")
+        total_duration = time.time() - start_time
+        logger.error(f"❌ [QUOTE EXCEPTION] Error after {total_duration:.2f}s: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error while fetching quote"

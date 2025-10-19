@@ -225,7 +225,12 @@ async def get_current_user(
 
     logger.info(f"🔐 [GET_USER START] {path} - Getting current user")
 
-    # Always use enhanced auth service for consistent authentication
+    # Check if middleware already set the user (from token refresh)
+    if hasattr(request.state, "user") and request.state.user:
+        logger.info(f"✅ [GET_USER CACHED] {path} - Using user from middleware (user_id={request.state.user.id})")
+        return request.state.user
+
+    # Otherwise, use enhanced auth service for authentication
     auth_start = time.time()
     user = await enhanced_auth_service.get_current_user_from_request(request, response, db)
     auth_duration = time.time() - auth_start

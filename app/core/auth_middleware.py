@@ -187,23 +187,44 @@ class SessionAuthenticationMiddleware(BaseHTTPMiddleware):
         logger.info(f"➡️  [AUTH_MW CALLING] {path} - Calling next middleware/endpoint")
         call_start = time.time()
 
+        # Check if we need to refresh tokens BEFORE calling the endpoint
+        # This ensures tokens are fresh for the entire request
+        logger.info(f"🔄 [AUTH_MW PRE-REFRESH] {path} - Checking if token refresh needed before endpoint")
+        temp_response = Response()
+        async with async_session() as db:
+            try:
+                payload = await enhanced_auth_service.verify_and_refresh_if_needed(
+                    request, temp_response, db
+                )
+                # If tokens were refreshed, temp_response will have new cookies
+                if temp_response.headers.get("set-cookie"):
+                    logger.info(f"✅ [AUTH_MW PRE-REFRESH] {path} - Tokens refreshed, will set new cookies")
+                    # Store temp_response to merge cookies later
+                    request.state.refreshed_response = temp_response
+
+                    # IMPORTANT: Also get the user and store in request.state
+                    # so that Depends(get_current_user) can use it directly
+                    user = await enhanced_auth_service.get_current_user_from_request(request, temp_response, db)
+                    if user:
+                        request.state.user = user
+                        logger.info(f"✅ [AUTH_MW PRE-REFRESH] {path} - Stored refreshed user in request.state, user_id={user.id}")
+
+                if payload:
+                    logger.info(f"✅ [AUTH_MW PRE-REFRESH] {path} - Valid token found, user_id={payload.get('user_id')}")
+            except Exception as e:
+                logger.warning(f"❌ [AUTH_MW PRE-REFRESH FAIL] {path} - Token refresh check failed: {str(e)}")
+
         response = await call_next(request)
 
         call_duration = time.time() - call_start
         logger.info(f"⬅️  [AUTH_MW RETURNED] {path} - Response received ({call_duration:.2f}s)")
 
-        # For authenticated endpoints, try to refresh tokens if needed
-        # Create a separate session only for token refresh (minimal operation)
-        if hasattr(request.state, "user") and request.state.user:
-            logger.info(f"🔄 [AUTH_MW REFRESH] {path} - Checking if token refresh needed")
-            async with async_session() as db:
-                try:
-                    await enhanced_auth_service.verify_and_refresh_if_needed(
-                        request, response, db
-                    )
-                    logger.info(f"✅ [AUTH_MW REFRESH] {path} - Token refresh check complete")
-                except Exception as e:
-                    logger.warning(f"❌ [AUTH_MW REFRESH FAIL] {path} - Token refresh failed: {str(e)}")
+        # Merge refreshed cookies if we have them
+        if hasattr(request.state, "refreshed_response"):
+            refreshed_response = request.state.refreshed_response
+            for cookie_header in refreshed_response.headers.getlist("set-cookie"):
+                response.headers.append("set-cookie", cookie_header)
+            logger.info(f"✅ [AUTH_MW COOKIE MERGE] {path} - Merged refreshed auth cookies into response")
 
         total_duration = time.time() - start_time
         logger.info(f"🟢 [AUTH_MW COMPLETE] {path} - Session auth complete ({total_duration:.2f}s)")

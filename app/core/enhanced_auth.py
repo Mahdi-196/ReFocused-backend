@@ -210,12 +210,17 @@ class EnhancedAuthService:
             if settings.AUTO_REFRESH_ENABLED:
                 exp_timestamp = payload.get("exp")
                 if exp_timestamp:
-                    # Both times must be in UTC for correct comparison
-                    exp_time = datetime.utcfromtimestamp(exp_timestamp)
-                    time_until_expiry = exp_time - datetime.utcnow()
+                    # Use timezone-aware datetime for correct comparison
+                    from datetime import timezone
+                    exp_time = datetime.fromtimestamp(exp_timestamp, tz=timezone.utc)
+                    current_time = datetime.now(timezone.utc)
+                    time_until_expiry = exp_time - current_time
+
+                    logger.debug(f"Token expires in {time_until_expiry.total_seconds()/60:.1f} minutes (threshold: {settings.AUTO_REFRESH_THRESHOLD_MINUTES} min)")
 
                     # If token expires within threshold, refresh automatically
                     if time_until_expiry < timedelta(minutes=settings.AUTO_REFRESH_THRESHOLD_MINUTES):
+                        logger.info(f"Token expires soon ({time_until_expiry.total_seconds()/60:.1f} min), triggering auto-refresh")
                         return await self.refresh_token_flow(request, response, db)
 
             return payload

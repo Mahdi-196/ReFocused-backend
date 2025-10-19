@@ -136,6 +136,9 @@ app.include_router(mood_router.router, prefix="/api/mood", tags=["mood-alias"])
 # Root-level auth refresh alias for clients calling /auth/refresh
 from app.api.v1.endpoints.auth import enhanced_refresh_token as _refresh_handler
 app.add_api_route("/auth/refresh", _refresh_handler, methods=["POST"], tags=["auth"])  # delegates to /api/v1/auth/refresh handler
+# Add trailing slash variant for frontend compatibility
+app.add_api_route("/api/v1/auth/refresh/", _refresh_handler, methods=["POST"], tags=["auth"])
+app.add_api_route("/auth/refresh/", _refresh_handler, methods=["POST"], tags=["auth"])
 
 def _setup_sentry_and_tracing():
     if settings.SENTRY_DSN:
