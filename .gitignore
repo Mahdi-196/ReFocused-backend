@@ -221,3 +221,6 @@ clear_db_fast.py
 # Deployment artifacts
 lambda-trust-policy.json
 
+
+*.md
+!README.md
