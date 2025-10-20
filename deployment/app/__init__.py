@@ -1,3 +1,0 @@
-"""
-ReFocused Backend Application
-""" 

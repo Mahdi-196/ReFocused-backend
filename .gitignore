@@ -209,3 +209,15 @@ Thumbs.db
 # Security logs
 security*.log
 
+# Lambda deployment artifacts
+lambda_package/
+lambda_package_build/
+lambda_*.zip
+lambda_*.py
+
+# Database clear scripts (local only)
+clear_db_fast.py
+
+# Deployment artifacts
+lambda-trust-policy.json
+

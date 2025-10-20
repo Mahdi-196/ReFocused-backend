@@ -42,7 +42,7 @@ COPY --from=builder /root/.local /home/app/.local
 
 # Set work directory and copy app
 WORKDIR /app
-COPY --chown=app:app deployment/app ./app
+COPY --chown=app:app app ./app
 COPY --chown=app:app start.sh .
 
 # Prepare log directory for production file logging

@@ -7,7 +7,6 @@ from sqlalchemy import select, delete
 from app.core.auth import get_current_active_user
 from app.db.database import get_db
 from app.db.models import StudySet, Flashcard, User, SecurityLog
-from app.schemas.token import TokenPayload
 from pydantic import BaseModel, Field, validator
 from datetime import datetime
 
@@ -23,7 +22,7 @@ class FlashcardBase(BaseModel):
     id: Optional[int] = None
 
     @validator('front_content', 'back_content', 'question', 'answer')
-    def validate_content(cls, v, values):
+    def validate_content(cls, v):
         if v is None:
             return v
         if not v or v.isspace():
@@ -319,12 +318,81 @@ async def add_card_to_study_set(
     
     return FlashcardResponse.from_db_model(flashcard)
 
-@router.post("/bulk", response_model=BulkStudySetResponse)
-async def bulk_create_or_update_study_sets(
-    bulk_data: BulkStudySetCreate,
+@router.put("/{study_set_id}", response_model=StudySetResponse)
+async def update_study_set(
+    study_set_id: int,
+    study_set: StudySetCreate,
     request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
+):
+    """
+    Update an existing study set
+    """
+    result = await db.execute(
+        select(StudySet).where(
+            StudySet.id == study_set_id,
+            StudySet.user_id == current_user.id
+        ).options(selectinload(StudySet.flashcards))
+    )
+    existing_set = result.scalars().first()
+
+    if not existing_set:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Study set not found or not owned by current user"
+        )
+
+    # Update title
+    existing_set.title = study_set.title
+
+    # Update flashcards if provided
+    if study_set.flashcards is not None:
+        # Clear existing cards and add new ones
+        existing_set.flashcards.clear()
+        for card_data in study_set.flashcards:
+            existing_set.flashcards.append(
+                Flashcard(
+                    question=card_data.question or card_data.front_content,
+                    answer=card_data.answer or card_data.back_content
+                )
+            )
+
+    await log_study_set_operation(
+        db=db,
+        event_type="UPDATE",
+        user_id=current_user.id,
+        ip_address=request.client.host,
+        details=f"Updated study set ID {existing_set.id}"
+    )
+
+    # Commit the transaction
+    await db.commit()
+
+    # Refresh to ensure flashcards are loaded
+    await db.refresh(existing_set, ['flashcards'])
+
+    return StudySetResponse.from_db_model(existing_set)
+
+@router.patch("/{study_set_id}", response_model=StudySetResponse)
+async def patch_study_set(
+    study_set_id: int,
+    study_set: StudySetCreate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Partially update a study set (alias for PUT)
+    """
+    return await update_study_set(study_set_id, study_set, request, db, current_user)
+
+@router.post("/bulk", response_model=BulkStudySetResponse)
+async def bulk_create_or_update_study_sets(
+    bulk_data: BulkStudySetCreate,  # noqa: ARG001
+    request: Request,  # noqa: ARG001
+    db: AsyncSession = Depends(get_db),  # noqa: ARG001
+    current_user: User = Depends(get_current_active_user)  # noqa: ARG001
 ):
     """
     Create or update multiple study sets in a single request

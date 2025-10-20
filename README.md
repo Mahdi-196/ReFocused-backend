@@ -360,3 +360,9 @@ Layer caching for faster rebuilds. .dockerignore for smaller build context. Mult
 
 OWASP Top 10 protection. GDPR compliance (data export, account deletion). Password storage: bcrypt with 12 rounds. Session management: Secure, HTTP-only cookies. API security: Rate limiting, CSRF protection, input validation. Dependency scanning: Regular updates for CVEs.
 
+
+## AWS Deployment
+
+### Architecture Overview
+
+![ReFocused Architecture Diagram](https://mahdi-readme-images.s3.us-east-1.amazonaws.com/Refocused-Architecture+)
