@@ -53,6 +53,9 @@ def _seconds_until_midnight_utc() -> int:
 
 @api_router.post("/email/refocusedSubscribe", tags=["email"], summary="Subscribe (proxied)")
 async def proxy_email_subscribe(payload: EmailRequest, request: Request) -> dict:
+    logger = logging.getLogger(__name__)
+    logger.info("🌐 API /email/refocusedSubscribe called | email=%s", payload.email)
+
     try:
         # Per-IP daily limit
         ip_limit = settings.EMAIL_SUBSCRIPTION_DAILY_LIMIT
@@ -63,33 +66,56 @@ async def proxy_email_subscribe(payload: EmailRequest, request: Request) -> dict
         ip_key = f"email:actions:ip:{ip}:{date_key}"
         ttl_hint = _seconds_until_midnight_utc()
         ip_count = await cache.increment(ip_key, 1, ttl_hint) if cache.enabled else 1
+        # Handle None case when Redis is down
+        if ip_count is None:
+            ip_count = 1
         ttl_seconds = await cache.get_ttl(ip_key) if cache.enabled else ttl_hint
         ttl_seconds = ttl_seconds if ttl_seconds is not None else ttl_hint
-        logging.getLogger(__name__).debug(
-            "email_subscribe_rl ip=%s key=%s count=%s limit=%s ttl=%s",
-            ip, ip_key, ip_count, ip_limit, ttl_seconds
+
+        logger.info(
+            "🚦 Rate limit check | ip=%s | count=%s/%s | cache_enabled=%s | ttl=%ss",
+            ip, ip_count, ip_limit, cache.enabled, ttl_seconds
         )
+
         if ip_count > ip_limit:
+            logger.warning(
+                "⚠️ Rate limit exceeded | ip=%s | count=%s | limit=%s",
+                ip, ip_count, ip_limit
+            )
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Too many subscription attempts today",
                 headers={"Retry-After": str(ttl_seconds)},
             )
 
-        return await email_service.subscribe(payload.email)
+        result = await email_service.subscribe(payload.email)
+        logger.info("✅ API /email/refocusedSubscribe SUCCESS | email=%s", payload.email)
+        return result
+
     except HTTPException:
         # Preserve 429 or any explicit errors we raised above
         raise
     except httpx.HTTPStatusError as e:
         code = e.response.status_code if e.response is not None else 502
         text = e.response.text if e.response is not None else "Upstream error"
+        logger.error(
+            "❌ API /email/refocusedSubscribe HTTP error | email=%s | status=%s | detail=%s",
+            payload.email, code, text[:200]
+        )
         raise HTTPException(status_code=code, detail=text)
-    except Exception:
+    except Exception as e:
+        logger.error(
+            "❌ API /email/refocusedSubscribe unexpected error | email=%s | error=%s",
+            payload.email, str(e), exc_info=True
+        )
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Email subscribe upstream error")
 
 
 @api_router.post("/email/unsubscribe", tags=["email"], summary="Unsubscribe (proxied)")
 async def proxy_email_unsubscribe(payload: EmailRequest, request: Request) -> dict:
+    logger = logging.getLogger(__name__)
+    logger.info("🌐 API /email/unsubscribe called | email=%s", payload.email)
+
     try:
         # Apply same per-IP daily limit to unsubscribe so total actions <= limit
         ip_limit = settings.EMAIL_SUBSCRIPTION_DAILY_LIMIT
@@ -99,39 +125,73 @@ async def proxy_email_unsubscribe(payload: EmailRequest, request: Request) -> di
         ip_key = f"email:actions:ip:{ip}:{date_key}"
         ttl_hint = _seconds_until_midnight_utc()
         ip_count = await cache.increment(ip_key, 1, ttl_hint) if cache.enabled else 1
+        # Handle None case when Redis is down
+        if ip_count is None:
+            ip_count = 1
         ttl_q = await cache.get_ttl(ip_key) if cache.enabled else None
         ttl_seconds = ttl_q if ttl_q is not None else ttl_hint
-        logging.getLogger(__name__).debug(
-            "email_unsubscribe_rl ip=%s key=%s count=%s limit=%s ttl=%s",
-            ip, ip_key, ip_count, ip_limit, ttl_seconds
+
+        logger.info(
+            "🚦 Rate limit check | ip=%s | count=%s/%s | cache_enabled=%s | ttl=%ss",
+            ip, ip_count, ip_limit, cache.enabled, ttl_seconds
         )
+
         if ip_count > ip_limit:
+            logger.warning(
+                "⚠️ Rate limit exceeded | ip=%s | count=%s | limit=%s",
+                ip, ip_count, ip_limit
+            )
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Too many email list actions today",
                 headers={"Retry-After": str(ttl_seconds)},
             )
-        return await email_service.unsubscribe(payload.email)
+
+        result = await email_service.unsubscribe(payload.email)
+        logger.info("✅ API /email/unsubscribe SUCCESS | email=%s", payload.email)
+        return result
+
     except HTTPException:
         # Preserve explicit 4xx (e.g., 429) from our rate limiter
         raise
     except httpx.HTTPStatusError as e:
         code = e.response.status_code if e.response is not None else 502
         text = e.response.text if e.response is not None else "Upstream error"
+        logger.error(
+            "❌ API /email/unsubscribe HTTP error | email=%s | status=%s | detail=%s",
+            payload.email, code, text[:200]
+        )
         raise HTTPException(status_code=code, detail=text)
-    except Exception:
+    except Exception as e:
+        logger.error(
+            "❌ API /email/unsubscribe unexpected error | email=%s | error=%s",
+            payload.email, str(e), exc_info=True
+        )
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Email unsubscribe upstream error")
 
 
 @api_router.post("/email/status", tags=["email"], summary="Status (proxied)")
 async def proxy_email_status(payload: EmailRequest, request: Request) -> dict:
+    logger = logging.getLogger(__name__)
+    logger.info("🌐 API /email/status called | email=%s", payload.email)
+
     try:
-        return await email_service.status(payload.email)
+        result = await email_service.status(payload.email)
+        logger.info("✅ API /email/status SUCCESS | email=%s", payload.email)
+        return result
     except httpx.HTTPStatusError as e:
         code = e.response.status_code if e.response is not None else 502
         text = e.response.text if e.response is not None else "Upstream error"
+        logger.error(
+            "❌ API /email/status HTTP error | email=%s | status=%s | detail=%s",
+            payload.email, code, text[:200]
+        )
         raise HTTPException(status_code=code, detail=text)
-    except Exception:
+    except Exception as e:
+        logger.error(
+            "❌ API /email/status unexpected error | email=%s | error=%s",
+            payload.email, str(e), exc_info=True
+        )
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Email status upstream error")
 
 # Export monitoring router for root-level mounting (for /metrics, /health endpoints)
