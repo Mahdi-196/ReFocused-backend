@@ -1,6 +1,3 @@
-#!/bin/sh
-# This script will print debug info and then run the application
-
 echo "--- Container starting up at $(date) ---"
 
 echo "--- Printing environment variables for debugging ---"

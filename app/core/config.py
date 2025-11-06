@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     AUTO_REFRESH_THRESHOLD_MINUTES: int = Field(5, env="AUTO_REFRESH_THRESHOLD_MINUTES")  # Refresh if expires in 5 min
     AUTO_REFRESH_ENABLED: bool = Field(True, env="AUTO_REFRESH_ENABLED")
 
+    # Sliding session settings
+    SLIDING_SESSION_ENABLED: bool = Field(True, env="SLIDING_SESSION_ENABLED")  # Enable sliding session cookies
+    SLIDING_SESSION_REFRESH_HOURS: int = Field(24, env="SLIDING_SESSION_REFRESH_HOURS")  # Refresh cookies every 24h
+    SLIDING_SESSION_ABSOLUTE_MAX_DAYS: int = Field(60, env="SLIDING_SESSION_ABSOLUTE_MAX_DAYS")  # Force logout after 60 days
+
     # CSRF (double-submit cookie for cookie-auth flows)
     CSRF_ENABLED: bool = Field(True, env="CSRF_ENABLED")
     CSRF_HEADER_NAME: str = Field("X-CSRF-Token", env="CSRF_HEADER_NAME")

@@ -20,9 +20,19 @@ class EnhancedAuthService:
     def __init__(self):
         self.security = HTTPBearer(auto_error=False)
     
-    def create_session_tokens(self, user: User, remember_me: bool = False) -> Dict[str, Union[str, int]]:
-        """Create access and refresh tokens with appropriate expiration."""
-        
+    def create_session_tokens(self, user: User, remember_me: bool = False, session_started_at: Optional[datetime] = None) -> Dict[str, Union[str, int]]:
+        """Create access and refresh tokens with appropriate expiration.
+
+        Args:
+            user: The user to create tokens for
+            remember_me: Whether to extend session duration
+            session_started_at: When the session was originally created (for absolute max timeout)
+        """
+
+        # For sliding sessions, track when the session originally started
+        if session_started_at is None:
+            session_started_at = datetime.utcnow()
+
         # Access token - always short-lived for security
         access_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
         access_token = create_access_token(
@@ -30,22 +40,26 @@ class EnhancedAuthService:
                 "sub": user.email,  # Use email as subject (JWT standard)
                 "user_id": user.id,  # Include user_id for efficient lookups
                 "session_id": generate_secure_random_string(32),
-                "remember_me": remember_me
+                "remember_me": remember_me,
+                "session_started_at": session_started_at.timestamp(),  # Track original session start
+                "cookie_issued_at": datetime.utcnow().timestamp()  # Track when cookies were issued
             },
             expires_delta=access_expires
         )
-        
+
         # Refresh token - longer lived, extended if remember_me
         refresh_days = settings.SESSION_REMEMBER_ME_DAYS if remember_me else settings.REFRESH_TOKEN_EXPIRE_DAYS
         refresh_token = create_refresh_token(
             data={
                 "sub": user.email,  # Use email as subject (JWT standard)
                 "user_id": user.id,  # Include user_id for efficient lookups
-                "remember_me": remember_me
+                "remember_me": remember_me,
+                "session_started_at": session_started_at.timestamp(),  # Track original session start
+                "cookie_issued_at": datetime.utcnow().timestamp()  # Track when cookies were issued
             },
             expires_days=refresh_days
         )
-        
+
         return {
             "access_token": access_token,
             "refresh_token": refresh_token,
@@ -55,10 +69,15 @@ class EnhancedAuthService:
         }
     
     def set_auth_cookies(self, response: Response, tokens: Dict[str, Any]) -> None:
-        """Set secure HTTP-only authentication cookies."""
+        """Set secure HTTP-only authentication cookies with sliding session support."""
 
-        # Calculate cookie max age based on remember_me setting
-        max_age = settings.COOKIE_MAX_AGE if tokens.get("remember_me") else settings.SESSION_EXPIRE_MINUTES * 60
+        # For sliding sessions, use a consistent 7-day expiry
+        # This will be refreshed on activity, with a 60-day absolute maximum
+        if settings.SLIDING_SESSION_ENABLED:
+            max_age = 7 * 24 * 60 * 60  # 7 days in seconds
+        else:
+            # Legacy behavior based on remember_me
+            max_age = settings.COOKIE_MAX_AGE if tokens.get("remember_me") else settings.SESSION_EXPIRE_MINUTES * 60
 
         # Use configured SameSite value directly
         # For cross-origin cookies, MUST use SameSite=None with Secure=True
@@ -176,12 +195,12 @@ class EnhancedAuthService:
         response: Response,
         db: AsyncSession
     ) -> Optional[Dict[str, Any]]:
-        """Verify token and automatically refresh if needed."""
+        """Verify token and automatically refresh if needed with sliding session support."""
 
         access_token = self.extract_token_from_request(request)
         if not access_token:
             return None
-        
+
         # Check for test tokens first (development/testing)
         from app.core.auth import VALID_TEST_TOKENS
         if settings.is_development() and access_token in VALID_TEST_TOKENS:
@@ -205,6 +224,28 @@ class EnhancedAuthService:
             # Check if token is blacklisted
             if await TokenBlacklist.is_blacklisted(db, access_token):
                 return None
+
+            # SLIDING SESSION: Check absolute session age (60-day maximum)
+            if settings.SLIDING_SESSION_ENABLED:
+                session_started_at = payload.get("session_started_at")
+                if session_started_at:
+                    from datetime import timezone
+                    session_start = datetime.fromtimestamp(session_started_at, tz=timezone.utc)
+                    current_time = datetime.now(timezone.utc)
+                    session_age = current_time - session_start
+                    max_session_age = timedelta(days=settings.SLIDING_SESSION_ABSOLUTE_MAX_DAYS)
+
+                    if session_age > max_session_age:
+                        logger.info(f"Session exceeded absolute maximum of {settings.SLIDING_SESSION_ABSOLUTE_MAX_DAYS} days, forcing logout")
+                        return None
+
+                # SLIDING SESSION: Check if cookies need refresh (24-hour interval)
+                cookie_issued_at = payload.get("cookie_issued_at")
+                if cookie_issued_at:
+                    cookie_age_hours = (datetime.now(timezone.utc) - datetime.fromtimestamp(cookie_issued_at, tz=timezone.utc)).total_seconds() / 3600
+                    if cookie_age_hours > settings.SLIDING_SESSION_REFRESH_HOURS:
+                        logger.info(f"Cookies are {cookie_age_hours:.1f} hours old, triggering sliding session refresh")
+                        return await self.refresh_token_flow(request, response, db, sliding_refresh=True)
 
             # Check if token expires soon and auto-refresh is enabled
             if settings.AUTO_REFRESH_ENABLED:
@@ -235,9 +276,17 @@ class EnhancedAuthService:
         self,
         request: Request,
         response: Response,
-        db: AsyncSession
+        db: AsyncSession,
+        sliding_refresh: bool = False
     ) -> Optional[Dict[str, Any]]:
-        """Handle token refresh flow."""
+        """Handle token refresh flow with sliding session support.
+
+        Args:
+            request: The current request
+            response: The response to set cookies on
+            db: Database session
+            sliding_refresh: If True, preserve original session_started_at for sliding sessions
+        """
 
         refresh_token = await self.extract_refresh_token_from_request(request)
         if not refresh_token:
@@ -275,9 +324,18 @@ class EnhancedAuthService:
             if not user or not user.is_active:
                 return None
 
+            # For sliding sessions, preserve the original session start time
+            session_started_at = None
+            if sliding_refresh and settings.SLIDING_SESSION_ENABLED:
+                session_started_timestamp = payload.get("session_started_at")
+                if session_started_timestamp:
+                    from datetime import timezone
+                    session_started_at = datetime.fromtimestamp(session_started_timestamp, tz=timezone.utc)
+                    logger.info(f"Preserving session start time for sliding refresh: {session_started_at}")
+
             # Create new tokens
             remember_me = payload.get("remember_me", False)
-            new_tokens = self.create_session_tokens(user, remember_me)
+            new_tokens = self.create_session_tokens(user, remember_me, session_started_at=session_started_at)
 
             # Set new cookies
             self.set_auth_cookies(response, new_tokens)
