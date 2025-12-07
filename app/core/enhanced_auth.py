@@ -199,6 +199,12 @@ class EnhancedAuthService:
 
         access_token = self.extract_token_from_request(request)
         if not access_token:
+            # No access token, but check if there's a refresh token
+            # This handles cases where old cookies expired before sliding session was deployed
+            refresh_token = await self.extract_refresh_token_from_request(request)
+            if refresh_token:
+                logger.info("No access token found, but refresh token exists - attempting token refresh")
+                return await self.refresh_token_flow(request, response, db, sliding_refresh=True)
             return None
 
         # Check for test tokens first (development/testing)

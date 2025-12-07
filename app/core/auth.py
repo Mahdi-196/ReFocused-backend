@@ -48,8 +48,7 @@ def create_test_user() -> User:
 
 def jwt_required():
     """
-    Decorator to enforce JWT authentication with enhanced security validation.
-    This provides stronger authentication than the standard Depends(get_current_user).
+    Decorator to enforce JWT authentication.
     """
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
@@ -81,7 +80,7 @@ def jwt_required():
 class TokenManager:
     @staticmethod
     def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
-        """Create a JWT access token with enhanced security."""
+        """Create a JWT access token."""
         to_encode = data.copy()
         if expires_delta:
             expire = datetime.utcnow() + expires_delta
@@ -100,7 +99,7 @@ class TokenManager:
     
     @staticmethod
     def create_refresh_token(data: Dict[str, Any]) -> str:
-        """Create a JWT refresh token with enhanced security."""
+        """Create a JWT refresh token."""
         to_encode = data.copy()
         expire = datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
         
@@ -116,7 +115,7 @@ class TokenManager:
     
     @staticmethod
     async def verify_token(token: str, db: AsyncSession) -> Dict[str, Any]:
-        """Verify a token with enhanced security checks."""
+        """Verify a token."""
         # Check for test tokens first (development/testing)
         if settings.is_development() and token in VALID_TEST_TOKENS:
             logger.info(f"Test token detected: {token}")
@@ -218,7 +217,7 @@ async def get_current_user(
     response: Response,
     db: AsyncSession = Depends(get_db)
 ) -> User:
-    """Get the current user from request with enhanced authentication and automatic refresh."""
+    """Get the current user from request."""
     import time
     start_time = time.time()
     path = request.url.path

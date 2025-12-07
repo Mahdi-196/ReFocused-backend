@@ -15,12 +15,7 @@ from app.core.config import settings
 
 class ProductionMiddleware(BaseHTTPMiddleware):
     """
-    Consolidated production middleware that efficiently handles:
-    - Security validation and protection
-    - Request monitoring and metrics
-    - Correlation ID tracking
-    - Performance monitoring
-    - Rate limiting (when enabled)
+    Middleware for security validation, metrics, and request tracking.
     """
     
     def __init__(self, app: ASGIApp):
@@ -71,31 +66,28 @@ class ProductionMiddleware(BaseHTTPMiddleware):
     
     async def dispatch(self, request: Request, call_next):
         # Normalize URL path - remove double slashes (fixes frontend bug)
-        # This maintains security while fixing the /api//v1/auth/me -> /api/v1/auth/me issue
         original_path = request.url.path
-        normalized_path = re.sub(r'/+', '/', original_path)  # Replace multiple slashes with single
+        normalized_path = re.sub(r'/+', '/', original_path)
 
-        self.logger.info(f"🟦 [PROD_MW START] {request.method} {original_path} - Production middleware entry")
+        self.logger.info(f"Middleware entry: {request.method} {original_path}")
 
         if normalized_path != original_path:
             # Update the request path
             request.scope["path"] = normalized_path
             # Rebuild the URL with normalized path
             request._url = request.url.replace(path=normalized_path)
-            self.logger.info(f"🔧 [PROD_MW NORMALIZE] {original_path} -> {normalized_path}")
+            self.logger.info(f"Normalized path: {original_path} -> {normalized_path}")
 
         # Skip processing for certain paths
         skip_monitoring = normalized_path in self.skip_monitoring or request.method == "OPTIONS"
         skip_security = normalized_path in self.skip_security or request.method == "OPTIONS"
 
         if skip_monitoring and skip_security:
-            self.logger.info(f"⚪ [PROD_MW SKIP] {normalized_path} - Skipping (public/OPTIONS)")
             return await call_next(request)
 
         # Start timing
         start_time = time.time()
         client_ip = get_client_ip(request)
-        self.logger.info(f"🌐 [PROD_MW IP] {normalized_path} - Client IP: {client_ip}")
         
         # Generate correlation ID for tracking
         correlation_id = str(uuid.uuid4())
@@ -112,22 +104,14 @@ class ProductionMiddleware(BaseHTTPMiddleware):
         
         # Security validation
         if not skip_security:
-            self.logger.info(f"🔒 [PROD_MW SECURITY] {normalized_path} - Starting security validation")
-            security_start = time.time()
             security_response = await self._validate_security(request, client_ip)
-            security_duration = time.time() - security_start
-            self.logger.info(f"🔒 [PROD_MW SECURITY] {normalized_path} - Security validation complete ({security_duration:.3f}s)")
             if security_response:
-                self.logger.warning(f"❌ [PROD_MW BLOCKED] {normalized_path} - Request blocked by security")
+                self.logger.warning(f"Request blocked by security: {normalized_path}")
                 return security_response
 
         # Process request
         try:
-            self.logger.info(f"➡️  [PROD_MW CALLING] {normalized_path} - Calling next middleware/endpoint")
-            call_start_time = time.time()
             response = await call_next(request)
-            call_duration = time.time() - call_start_time
-            self.logger.info(f"⬅️  [PROD_MW RETURNED] {normalized_path} - Response received in {call_duration:.2f}s (status={response.status_code})")
             
             # Add security and monitoring headers
             if not skip_monitoring:
@@ -137,14 +121,10 @@ class ProductionMiddleware(BaseHTTPMiddleware):
             if not skip_monitoring:
                 await self._record_metrics_and_logs(request, response, start_time, client_ip)
             
-            total_duration = time.time() - start_time
-            self.logger.info(f"🟩 [PROD_MW COMPLETE] {normalized_path} - Total time: {total_duration:.2f}s")
             return response
 
         except Exception as e:
             # Handle errors
-            error_time = time.time() - start_time
-            self.logger.error(f"❌ [PROD_MW ERROR] {normalized_path} - Error after {error_time:.2f}s: {type(e).__name__}: {str(e)}")
             if not skip_monitoring:
                 await self._handle_error(request, e, start_time, client_ip)
             raise
@@ -228,12 +208,12 @@ class ProductionMiddleware(BaseHTTPMiddleware):
                 return False
 
             # Read body with timeout to prevent hanging
-            logger.info(f"🔍 MIDDLEWARE: Starting body read for {request.url.path}")
+            logger.info(f"Middleware: Starting body read for {request.url.path}")
             try:
                 body = await asyncio.wait_for(request.body(), timeout=5.0)
-                logger.info(f"✅ MIDDLEWARE: Body read complete ({len(body)} bytes) for {request.url.path}")
+                logger.info(f"Middleware: Body read complete ({len(body)} bytes) for {request.url.path}")
             except asyncio.TimeoutError:
-                logger.error(f"⏰ MIDDLEWARE: Body read TIMEOUT after 5s for {request.url.path}")
+                logger.error(f"Middleware: Body read TIMEOUT after 5s for {request.url.path}")
                 return False
 
             # CRITICAL FIX: Make body re-readable for FastAPI/Pydantic

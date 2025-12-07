@@ -36,11 +36,7 @@ if not security_logger.handlers:
     security_logger.addHandler(log_handler)
     security_logger.setLevel(logging.INFO)
 
-# Using bcrypt for password hashing with configured rounds for performance
-# bcrypt rounds=10 provides ~100ms hashing time (vs rounds=12 at ~400ms, 14 at ~1600ms)
-# This is still OWASP-compliant and secure while preventing registration timeouts
-
-# Use bcrypt library directly to avoid passlib's bug detection issues with long passwords
+# Using bcrypt for password hashing
 import bcrypt
 BCRYPT_ROUNDS = settings.BCRYPT_ROUNDS
 

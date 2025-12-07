@@ -18,8 +18,7 @@ logger = logging.getLogger(__name__)
 
 class ProductivityScoreCalculator:
     """
-    Core service for calculating monthly productivity scores based on user activities.
-    Implements the tier-based scoring system with quality weighting.
+    Calculates monthly productivity scores.
     """
     
     ALGORITHM_VERSION = "1.0.0"
@@ -66,41 +65,30 @@ class ProductivityScoreCalculator:
         force_recalculate: bool = False
     ) -> Dict[str, Any]:
         """
-        Calculate comprehensive monthly productivity score for a user.
-        
-        Returns:
-            Dict containing score, tier, breakdown, and metadata
+        Calculate monthly productivity score for a user.
         """
         start_time = datetime.utcnow()
         
         try:
-            # Check if score already exists and is recent
             if not force_recalculate:
                 existing_score = await self._get_existing_score(user_id, year, month)
                 if existing_score:
                     return self._format_score_response(existing_score)
             
-            # Get user targets
             targets = await self._get_user_targets(user_id)
-            
-            # Collect all activity data for the month
             activity_data = await self._collect_monthly_activity_data(user_id, year, month)
             
-            # Calculate score components
             score_breakdown = await self._calculate_score_components(
                 activity_data, targets, year, month
             )
             
-            # Calculate final score and tier
             final_score = self._calculate_final_score(score_breakdown)
             tier = self._determine_tier(final_score)
             
-            # Save score to database
             score_record = await self._save_monthly_score(
                 user_id, year, month, final_score, tier, score_breakdown
             )
             
-            # Log calculation
             execution_time = int((datetime.utcnow() - start_time).total_seconds() * 1000)
             await self._log_calculation(
                 user_id, year, month, activity_data, 
@@ -119,14 +107,12 @@ class ProductivityScoreCalculator:
     ) -> Dict[str, Any]:
         """Collect all activity data for the specified month."""
         
-        # Get month date range
         month_start = date(year, month, 1)
         if month == 12:
             month_end = date(year + 1, 1, 1) - timedelta(days=1)
         else:
             month_end = date(year, month + 1, 1) - timedelta(days=1)
         
-        # Collect habits and completions
         habits_query = select(Habit).where(
             and_(Habit.user_id == user_id, Habit.is_active == True)
         ).options(selectinload(Habit.completions))
@@ -134,7 +120,6 @@ class ProductivityScoreCalculator:
         habits_result = await self.db.execute(habits_query)
         habits = habits_result.scalars().all()
         
-        # Get habit completions for the month
         habit_completions = []
         for habit in habits:
             month_completions = [
@@ -143,7 +128,6 @@ class ProductivityScoreCalculator:
             ]
             habit_completions.extend(month_completions)
         
-        # Get journal entries
         journal_query = select(JournalEntry).join(JournalEntry.collection).where(
             and_(
                 JournalEntry.collection.has(user_id=user_id),
@@ -154,7 +138,6 @@ class ProductivityScoreCalculator:
         journal_result = await self.db.execute(journal_query)
         journal_entries = journal_result.scalars().all()
         
-        # Get gratitude entries
         gratitude_query = select(Gratitude).where(
             and_(
                 Gratitude.user_id == user_id,
@@ -165,7 +148,6 @@ class ProductivityScoreCalculator:
         gratitude_result = await self.db.execute(gratitude_query)
         gratitude_entries = gratitude_result.scalars().all()
         
-        # Get completed goals
         goals_2week_query = select(Goal2Week).where(
             and_(
                 Goal2Week.user_id == user_id,
@@ -188,7 +170,6 @@ class ProductivityScoreCalculator:
         goals_longterm_result = await self.db.execute(goals_longterm_query)
         completed_longterm_goals = goals_longterm_result.scalars().all()
         
-        # Get user statistics (for pomodoro and meditation data)
         stats_query = select(UserStatistics).where(
             and_(
                 UserStatistics.user_id == user_id,
@@ -199,7 +180,6 @@ class ProductivityScoreCalculator:
         stats_result = await self.db.execute(stats_query)
         user_stats = stats_result.scalars().all()
         
-        # Get activity quality logs
         activity_logs_query = select(ActivityQualityLog).where(
             and_(
                 ActivityQualityLog.user_id == user_id,
@@ -210,7 +190,6 @@ class ProductivityScoreCalculator:
         activity_logs_result = await self.db.execute(activity_logs_query)
         activity_logs = activity_logs_result.scalars().all()
         
-        # Calculate app engagement days
         app_days = set()
         for completion in habit_completions:
             app_days.add(completion.date)
@@ -241,22 +220,11 @@ class ProductivityScoreCalculator:
     ) -> Dict[str, Any]:
         """Calculate individual score components."""
         
-        # Calculate habit performance
         habits_score = self._calculate_habits_score(activity_data, targets)
-        
-        # Calculate focus/pomodoro performance
         focus_score = self._calculate_focus_score(activity_data, targets)
-        
-        # Calculate wellness/meditation performance
         wellness_score = self._calculate_wellness_score(activity_data, targets)
-        
-        # Calculate goals performance
         goals_score = self._calculate_goals_score(activity_data, targets)
-        
-        # Calculate journal/reflection performance
         journal_score = self._calculate_journal_score(activity_data, targets)
-        
-        # Calculate consistency multiplier
         consistency_multiplier = self._calculate_consistency_multiplier(
             activity_data, targets
         )

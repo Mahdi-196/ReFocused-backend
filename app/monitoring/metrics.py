@@ -17,10 +17,8 @@ import threading
 from app.core.config import settings
 
 
-# Create custom registry for better control
 REGISTRY = CollectorRegistry()
 
-# HTTP Metrics
 HTTP_REQUESTS_TOTAL = Counter(
     'http_requests_total',
     'Total HTTP requests by method, endpoint and status',
@@ -49,11 +47,10 @@ HTTP_RESPONSE_SIZE = Histogram(
     registry=REGISTRY
 )
 
-# Authentication Metrics
 AUTH_ATTEMPTS_TOTAL = Counter(
     'auth_attempts_total',
     'Total authentication attempts',
-    ['method', 'result'],  # result: success, failure, error
+    ['method', 'result'],
     registry=REGISTRY
 )
 
@@ -70,7 +67,6 @@ TOKEN_REFRESH_TOTAL = Counter(
     registry=REGISTRY
 )
 
-# Database Metrics
 DB_CONNECTIONS_ACTIVE = Gauge(
     'database_connections_active',
     'Active database connections',
@@ -91,11 +87,10 @@ DB_QUERIES_TOTAL = Counter(
     registry=REGISTRY
 )
 
-# Business Metrics
 USERS_REGISTERED_TOTAL = Counter(
     'users_registered_total',
     'Total user registrations',
-    ['method'],  # email, google_oauth
+    ['method'],
     registry=REGISTRY
 )
 
@@ -125,7 +120,6 @@ GOALS_COMPLETED_TOTAL = Counter(
     registry=REGISTRY
 )
 
-# System Metrics
 SYSTEM_CPU_USAGE = Gauge(
     'system_cpu_usage_percent',
     'System CPU usage percentage',
@@ -145,7 +139,6 @@ SYSTEM_DISK_USAGE = Gauge(
     registry=REGISTRY
 )
 
-# Application Health
 APP_HEALTH_STATUS = Gauge(
     'app_health_status',
     'Application health status (1=healthy, 0=unhealthy)',
@@ -158,7 +151,6 @@ APP_UPTIME_SECONDS = Gauge(
     registry=REGISTRY
 )
 
-# Error Metrics
 ERRORS_TOTAL = Counter(
     'errors_total',
     'Total application errors',
@@ -173,7 +165,6 @@ SECURITY_EVENTS_TOTAL = Counter(
     registry=REGISTRY
 )
 
-# Cache Metrics
 CACHE_HITS = Counter(
     'cache_hits_total',
     'Total cache hits',
@@ -204,15 +195,12 @@ class MetricsCollector:
         def collect_system_metrics():
             while True:
                 try:
-                    # CPU usage
                     cpu_percent = psutil.cpu_percent(interval=1)
                     SYSTEM_CPU_USAGE.set(cpu_percent)
                     
-                    # Memory usage
                     memory = psutil.virtual_memory()
                     SYSTEM_MEMORY_USAGE.set(memory.used)
                     
-                    # Disk usage
                     for partition in psutil.disk_partitions():
                         try:
                             disk_usage = psutil.disk_usage(partition.mountpoint)
@@ -220,14 +208,12 @@ class MetricsCollector:
                         except PermissionError:
                             continue
                     
-                    # App uptime
                     uptime = time.time() - self.start_time
                     APP_UPTIME_SECONDS.set(uptime)
                     
-                    time.sleep(30)  # Collect every 30 seconds
+                    time.sleep(30)
                     
                 except Exception as e:
-                    # Don't let metrics collection crash the app
                     pass
         
         thread = threading.Thread(target=collect_system_metrics, daemon=True)

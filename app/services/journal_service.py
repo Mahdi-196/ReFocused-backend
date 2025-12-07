@@ -1,10 +1,12 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 from sqlalchemy import select
 from app.crud.journal import JournalCollectionCRUD
 from app.schemas.journal import JournalCollectionCreate
 from app.db.models import JournalCollection
+import logging
 
+logger = logging.getLogger(__name__)
 
 class JournalService:
     """Business logic for journal operations"""
@@ -25,8 +27,9 @@ class JournalService:
                 JournalCollectionCRUD.create(db, default_collection, user_id)
                 
         except Exception as e:
-            # Log error but don't break user registration
-            pass
+            logger.error(f"Failed to setup user journal: {e}")
+            # Don't break user registration flow if journal setup fails
+
     
     @staticmethod
     async def setup_user_journal_async(db: AsyncSession, user_id: int) -> None:
@@ -53,8 +56,9 @@ class JournalService:
                 await db.commit()
                 
         except Exception as e:
-            # Log error but don't break user registration
-            pass
+            logger.error(f"Failed to setup async user journal: {e}")
+            # Don't break user registration flow if journal setup fails
+
     
     @staticmethod
     def validate_collection_access(

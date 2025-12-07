@@ -4,7 +4,6 @@ from starlette.types import ASGIApp
 import time
 import logging
 from typing import Dict, List
-import re
 from app.core.config import settings
 from app.utils.security import get_client_ip, validate_content_type
 from app.db.database import async_session
@@ -22,18 +21,7 @@ class UnifiedSecurityMiddleware(BaseHTTPMiddleware):
         self.ip_blocklist: Dict[str, float] = {}
         self.max_request_size = 10 * 1024 * 1024  # 10MB
         
-        # Pre-compile SQL injection patterns for performance
-        self.sql_patterns = [
-            re.compile(r"\bunion\s+select\b", re.IGNORECASE),
-            re.compile(r"\bor\s+1\s*=\s*1\b", re.IGNORECASE),
-            re.compile(r"\band\s+1\s*=\s*1\b", re.IGNORECASE),
-            re.compile(r";.*?(drop|delete|insert|update)\s+", re.IGNORECASE),
-            re.compile(r"/\*.*?\*/", re.IGNORECASE),
-            re.compile(r"--.*$", re.IGNORECASE | re.MULTILINE),
-        ]
-        
     async def dispatch(self, request: Request, call_next):
-        # Skip middleware for static/health endpoints and debug endpoints
         skip_paths = ["/health", "/docs", "/redoc", "/openapi.json"]
         debug_paths = ["/debug/", "/api/v1/time/debug/"]
         
@@ -47,15 +35,6 @@ class UnifiedSecurityMiddleware(BaseHTTPMiddleware):
         
         client_ip = get_client_ip(request)
         
-        # 1. IP Blocking Check (fastest check first)
-        # DISABLED - skip all IP blocking
-        # if client_ip in self.ip_blocklist:
-        #     if time.time() < self.ip_blocklist[client_ip]:
-        #         return self._rate_limit_response()
-        #     else:
-        #         del self.ip_blocklist[client_ip]
-        
-        # 2. Global Rate Limiting (token bucket via Redis if enabled)
         if settings.RATE_LIMIT_ENABLED:
             limited, retry_after = await self._check_token_bucket(client_ip)
             if limited:
@@ -70,39 +49,25 @@ class UnifiedSecurityMiddleware(BaseHTTPMiddleware):
                     },
                 )
         
-        # 3. Request Validation
         validation_response = await self._validate_request(request, client_ip)
         if validation_response:
             return validation_response
         
-        # 4. SQL Injection Check
-        if self._check_sql_injection(request, client_ip):
-            return Response(
-                content="Malicious request detected",
-                status_code=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # 5. Add user context if authenticated
         await self._add_user_context(request)
         
-        # Process request
         response = await call_next(request)
         
-        # Add security headers
         self._add_security_headers(response, client_ip)
         
-        # Log if needed
         if settings.SECURITY_LOG_ENABLED:
             self._log_request(request, response, client_ip, time.time() - start_time)
         
         return response
     
     async def _check_token_bucket(self, client_ip: str) -> tuple[bool, int]:
-        """Redis-backed token bucket. Returns (is_limited, retry_after_seconds)."""
         capacity = settings.GLOBAL_RATE_LIMIT_CAPACITY
         refill_rate = settings.GLOBAL_RATE_LIMIT_REFILL_RATE
 
-        # Keys
         key_tokens = f"rl:bucket:ip:{client_ip}:tokens"
         key_ts = f"rl:bucket:ip:{client_ip}:ts"
 
@@ -110,7 +75,6 @@ class UnifiedSecurityMiddleware(BaseHTTPMiddleware):
         retry_after_seconds = 1
 
         if cache.enabled:
-            # Load current state
             raw_tokens = await cache.get(key_tokens)
             raw_ts = await cache.get(key_ts)
 
@@ -123,31 +87,24 @@ class UnifiedSecurityMiddleware(BaseHTTPMiddleware):
             except Exception:
                 last_ts = now
 
-            # Refill
             elapsed = max(0.0, now - last_ts)
             tokens = min(float(capacity), tokens + elapsed * float(refill_rate))
 
             if tokens < 1.0:
-                # Compute wait time until 1 token
                 need = 1.0 - tokens
                 retry_after_seconds = max(1, int(need / float(refill_rate))) if refill_rate > 0 else 1
-                # Persist updated timestamp so future refills work
                 await cache.set(key_ts, str(now), ttl=3600, serialize_method="pickle")
                 await cache.set(key_tokens, str(tokens), ttl=3600, serialize_method="pickle")
                 return True, retry_after_seconds
 
-            # Consume one token
             tokens -= 1.0
             await cache.set(key_ts, str(now), ttl=3600, serialize_method="pickle")
             await cache.set(key_tokens, str(tokens), ttl=3600, serialize_method="pickle")
             return False, 0
 
-        # Fallback: no Redis, allow traffic (development single-process can opt to add in-memory if desired)
         return False, 0
     
     async def _validate_request(self, request: Request, client_ip: str) -> Response | None:
-        """Validate request size and content type."""
-        # Check request size
         content_length = request.headers.get("content-length")
         if content_length and int(content_length) > self.max_request_size:
             logger.warning(f"Request too large from {client_ip}: {content_length} bytes")
@@ -156,7 +113,6 @@ class UnifiedSecurityMiddleware(BaseHTTPMiddleware):
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
             )
         
-        # Validate content type for POST/PUT requests
         if request.method in ["POST", "PUT", "PATCH"]:
             content_type = request.headers.get("content-type", "")
             if not validate_content_type(content_type):
@@ -168,16 +124,6 @@ class UnifiedSecurityMiddleware(BaseHTTPMiddleware):
         
         return None
     
-    def _check_sql_injection(self, request: Request, client_ip: str) -> bool:
-        """Check for SQL injection patterns."""
-        # Check URL parameters
-        query_params = str(request.query_params)
-        if any(pattern.search(query_params) for pattern in self.sql_patterns):
-            logger.critical(f"SQL injection attempt in URL from {client_ip}: {query_params}")
-            return True
-        
-        return False
-    
     async def _add_user_context(self, request: Request):
         """Add user context to request state if authenticated."""
         auth_header = request.headers.get("Authorization")
@@ -188,8 +134,9 @@ class UnifiedSecurityMiddleware(BaseHTTPMiddleware):
                     user = await get_current_user_from_token(token, db)
                     request.state.current_user = user
                     request.state.user_id = user.id
-            except Exception:
-                pass  # Let endpoints handle authentication
+            except Exception as e:
+                logger.debug(f"Authentication context failure: {e}")
+                # Let endpoints handle authentication failures explicitly
     
     def _add_security_headers(self, response: Response, client_ip: str):
         """Add security headers to response."""

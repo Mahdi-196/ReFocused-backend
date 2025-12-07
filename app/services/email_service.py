@@ -97,28 +97,28 @@ class EmailSubscriptionService:
         except Exception as e:
             elapsed_ms = (time.time() - start_time) * 1000
             logger.error(
-                "❌ Email API Unexpected Error | endpoint=%s | elapsed_ms=%.2f | error_type=%s | error=%s",
+                "Email API Unexpected Error | endpoint=%s | elapsed_ms=%.2f | error_type=%s | error=%s",
                 path, elapsed_ms, type(e).__name__, str(e),
                 exc_info=True
             )
             raise
 
     async def subscribe(self, email: str) -> Dict[str, Any]:
-        logger.info("🔔 SUBSCRIBE requested for email: %s", email)
+        logger.info("SUBSCRIBE requested for email: %s", email)
         result = await self._post("/refocusedSubscribe", {"email": email, "action": "subscribe"})
-        logger.info("🔔 SUBSCRIBE completed for email: %s | result: %s", email, result)
+        logger.info("SUBSCRIBE completed for email: %s | result: %s", email, result)
         return result
 
     async def unsubscribe(self, email: str) -> Dict[str, Any]:
-        logger.info("🔕 UNSUBSCRIBE requested for email: %s", email)
+        logger.info("UNSUBSCRIBE requested for email: %s", email)
         result = await self._post("/unsubscribe", {"email": email, "action": "unsubscribe"})
-        logger.info("🔕 UNSUBSCRIBE completed for email: %s | result: %s", email, result)
+        logger.info("UNSUBSCRIBE completed for email: %s | result: %s", email, result)
         return result
 
     async def status(self, email: str) -> Dict[str, Any]:
-        logger.info("❓ STATUS CHECK requested for email: %s", email)
+        logger.info("STATUS CHECK requested for email: %s", email)
         result = await self._post("/status", {"email": email})
-        logger.info("❓ STATUS CHECK completed for email: %s | result: %s", email, result)
+        logger.info("STATUS CHECK completed for email: %s | result: %s", email, result)
         return result
 
 
