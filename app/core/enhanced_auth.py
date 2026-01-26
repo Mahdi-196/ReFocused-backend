@@ -161,31 +161,41 @@ class EnhancedAuthService:
         
         return None
     
-    async def extract_refresh_token_from_request(self, request: Request) -> Optional[str]:
-        """Extract refresh token from cookies, header, or JSON body (fallback)."""
-        
+    async def extract_refresh_token_from_request(self, request: Request, skip_body: bool = False) -> Optional[str]:
+        """Extract refresh token from cookies, header, or JSON body (fallback).
+
+        Args:
+            request: The FastAPI request
+            skip_body: If True, don't try to read from request body (prevents consuming body before endpoint)
+        """
+
         # Try cookies first
         token = request.cookies.get("refresh_token")
         if token:
             return token
-        
+
         # Fallback to custom header
         header_token = request.headers.get("X-Refresh-Token")
         if header_token:
             return header_token
 
-        # Final fallback: JSON body
-        try:
-            if request.method in ("POST", "PUT"):
-                content_type = request.headers.get("content-type", "").lower()
-                if "application/json" in content_type:
-                    data = await request.json()
-                    body_token = data.get("refresh_token") if isinstance(data, dict) else None
-                    if body_token:
-                        return body_token
-        except Exception:
-            # Ignore body parsing errors
-            pass
+        # Final fallback: JSON body (only if not skipping and on refresh endpoint)
+        # IMPORTANT: Don't read body in middleware for non-refresh endpoints
+        # as it consumes the body and prevents endpoints from reading it
+        if not skip_body:
+            try:
+                # Only read body for explicit refresh endpoints
+                path = request.url.path
+                if request.method in ("POST", "PUT") and "refresh" in path:
+                    content_type = request.headers.get("content-type", "").lower()
+                    if "application/json" in content_type:
+                        data = await request.json()
+                        body_token = data.get("refresh_token") if isinstance(data, dict) else None
+                        if body_token:
+                            return body_token
+            except Exception:
+                # Ignore body parsing errors
+                pass
 
         return None
     
@@ -201,7 +211,8 @@ class EnhancedAuthService:
         if not access_token:
             # No access token, but check if there's a refresh token
             # This handles cases where old cookies expired before sliding session was deployed
-            refresh_token = await self.extract_refresh_token_from_request(request)
+            # IMPORTANT: skip_body=True to avoid consuming request body before endpoints can read it
+            refresh_token = await self.extract_refresh_token_from_request(request, skip_body=True)
             if refresh_token:
                 logger.info("No access token found, but refresh token exists - attempting token refresh")
                 return await self.refresh_token_flow(request, response, db, sliding_refresh=True)
@@ -283,7 +294,8 @@ class EnhancedAuthService:
         request: Request,
         response: Response,
         db: AsyncSession,
-        sliding_refresh: bool = False
+        sliding_refresh: bool = False,
+        skip_body: bool = True
     ) -> Optional[Dict[str, Any]]:
         """Handle token refresh flow with sliding session support.
 
@@ -292,9 +304,12 @@ class EnhancedAuthService:
             response: The response to set cookies on
             db: Database session
             sliding_refresh: If True, preserve original session_started_at for sliding sessions
+            skip_body: If True, don't read request body (default True to avoid consuming body in middleware)
         """
 
-        refresh_token = await self.extract_refresh_token_from_request(request)
+        # IMPORTANT: When called from middleware, skip_body should be True to avoid
+        # consuming the request body before endpoints can read it
+        refresh_token = await self.extract_refresh_token_from_request(request, skip_body=skip_body)
         if not refresh_token:
             return None
 
