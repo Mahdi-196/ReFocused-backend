@@ -1,7 +1,5 @@
 # ReFocused Backend API
 
-**Production API:** [refocused.app](https://refocused.app)
-
 Backend API for the ReFocused productivity platform, built with FastAPI.
 
 ---
